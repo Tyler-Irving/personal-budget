@@ -14,6 +14,7 @@
         <th class="px-3 py-2">Current $</th>
         <th class="px-3 py-2">Target Date</th>
         <th class="px-3 py-2">Plan $/mo</th>
+        <th class="px-3 py-2" title="Day of month the contribution hits checking, used by /forecast. Defaults to 1.">Day</th>
         <th class="px-3 py-2 text-right" title="(Target − Current) ÷ months until target date">Need $/mo</th>
         <th class="px-3 py-2 text-center">Status</th>
         <th class="px-3 py-2 text-right">Progress</th>
@@ -29,6 +30,7 @@
         <td class="px-2 py-1"><input name="current_{{ loop.index0 }}" type="number" step="0.01" value="{{ '%.2f' | format(g['Current Balance']) }}" class="w-32 {{ ipt }}"></td>
         <td class="px-2 py-1"><input name="date_{{ loop.index0 }}" type="date" value="{{ g['Target Date'].strftime('%Y-%m-%d') if g['Target Date'] is not none and g['Target Date'] == g['Target Date'] else '' }}" class="{{ ipt }}"></td>
         <td class="px-2 py-1"><input name="monthly_{{ loop.index0 }}" type="number" step="0.01" value="{{ '%.2f' | format(g['Monthly Contribution']) }}" class="w-28 {{ ipt }}"></td>
+        <td class="px-2 py-1"><input name="day_{{ loop.index0 }}" type="number" min="1" max="31" value="{{ g.Day }}" class="w-16 {{ ipt }}"></td>
         <td class="px-3 py-1 text-right font-medium {% if g['Required Monthly'] > g['Monthly Contribution'] %}text-red-700 dark:text-red-400{% else %}text-gray-700 dark:text-gray-200{% endif %}">${{ "{:,.0f}".format(g['Required Monthly']) }}</td>
         <td class="px-3 py-1 text-center">
           {% if g['On Track'] %}
@@ -49,6 +51,7 @@
         <td class="px-2 py-1"><input name="current_NEW" type="number" step="0.01" placeholder="0" class="w-32 {{ ipt }}"></td>
         <td class="px-2 py-1"><input name="date_NEW" type="date" class="{{ ipt }}"></td>
         <td class="px-2 py-1"><input name="monthly_NEW" type="number" step="0.01" placeholder="0" class="w-28 {{ ipt }}"></td>
+        <td class="px-2 py-1"><input name="day_NEW" type="number" min="1" max="31" value="1" class="w-16 {{ ipt }}"></td>
         <td class="px-3 py-1 text-right text-gray-400 dark:text-gray-500">—</td>
         <td class="px-3 py-1 text-center text-gray-400 dark:text-gray-500">—</td>
         <td class="px-3 py-1 text-right text-gray-400 dark:text-gray-500">—</td>

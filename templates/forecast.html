@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Forecast{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+  <h1 class="text-2xl font-bold">Cash-flow Forecast</h1>
+  <form method="get" action="/forecast" class="flex gap-2 items-center text-sm">
+    <label class="text-gray-600 dark:text-gray-400">Horizon</label>
+    <select name="horizon" onchange="this.form.submit()" class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1">
+      {% for h in [30, 90, 180, 365] %}
+        <option value="{{ h }}" {% if f.horizon_days == h %}selected{% endif %}>{{ h }} days</option>
+      {% endfor %}
+    </select>
+    <label class="text-gray-600 dark:text-gray-400 ml-2">Estimate</label>
+    <select name="mode" onchange="this.form.submit()" class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1">
+      <option value="mean" {% if f.mode == 'mean' %}selected{% endif %}>Mean (typical)</option>
+      <option value="p75" {% if f.mode == 'p75' %}selected{% endif %}>P75 (conservative)</option>
+    </select>
+    <label class="ml-2 inline-flex items-center gap-1">
+      <input type="checkbox" name="include_savings" {% if f.include_savings %}checked{% endif %} onchange="this.form.submit()">
+      <span class="text-gray-600 dark:text-gray-400">Include goal contributions</span>
+    </label>
+  </form>
+</div>
+
+{% if f.warnings %}
+<div class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 p-3 rounded mb-4 text-sm space-y-1">
+  {% for w in f.warnings %}<div>• {{ w }}</div>{% endfor %}
+</div>
+{% endif %}
+
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+  <div class="bg-white dark:bg-gray-800 p-3 rounded shadow">
+    <div class="text-xs text-gray-600 dark:text-gray-400">Starting balance</div>
+    <div class="text-xl font-semibold">${{ "{:,.0f}".format(f.start_balance) }}</div>
+    {% if f.start_date %}
+      <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+        snapshot {{ f.start_date }}
+        {% if f.snapshot_age_days and f.snapshot_age_days > 30 %}
+          <span class="text-amber-700 dark:text-amber-400">· {{ f.snapshot_age_days }}d old</span>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+  <div class="bg-white dark:bg-gray-800 p-3 rounded shadow">
+    <div class="text-xs text-gray-600 dark:text-gray-400">{{ f.horizon_days }}-day low</div>
+    <div class="text-xl font-semibold {% if f.low_point.balance < 0 %}text-red-700 dark:text-red-400{% endif %}">${{ "{:,.0f}".format(f.low_point.balance) }}</div>
+    <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">on {{ f.low_point.date }}</div>
+  </div>
+  <div class="bg-white dark:bg-gray-800 p-3 rounded shadow">
+    <div class="text-xs text-gray-600 dark:text-gray-400">Negative days</div>
+    <div class="text-xl font-semibold {% if f.negative_days > 0 %}text-red-700 dark:text-red-400{% else %}text-gray-800 dark:text-gray-200{% endif %}">{{ f.negative_days }}</div>
+    <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">in next {{ f.horizon_days }}</div>
+  </div>
+  <div class="bg-white dark:bg-gray-800 p-3 rounded shadow">
+    <div class="text-xs text-gray-600 dark:text-gray-400">Variable burn</div>
+    <div class="text-xl font-semibold">${{ "{:,.0f}".format(f.daily_burn) }}<span class="text-sm text-gray-500 dark:text-gray-400">/day</span></div>
+    <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ f.mode }} of last 3 mo</div>
+  </div>
+</div>
+
+<div class="bg-white dark:bg-gray-800 p-4 rounded shadow mb-6">
+  <h2 class="font-semibold mb-2 text-gray-700 dark:text-gray-200">Projected checking balance</h2>
+  <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+    Green = income · red = bill · blue = goal contribution. Hover any marker for detail.
+    {% if f.income %}
+      Detected {{ f.income.cadence }} income ≈ ${{ "{:,.0f}".format(f.income.avg_amount) }} every {{ f.income.interval_days }}d.
+    {% endif %}
+  </p>
+  <div id="fc-chart" style="height:460px"></div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  <div class="bg-white dark:bg-gray-800 p-4 rounded shadow">
+    <h2 class="font-semibold mb-2 text-gray-700 dark:text-gray-200">Next 30 days — scheduled events</h2>
+    {% set next30 = f.events | selectattr('date', 'le', (f.dates[30] if f.dates|length > 30 else f.dates[-1])) | list %}
+    {% if next30 %}
+    <table class="w-full text-sm">
+      <thead class="text-left text-xs uppercase text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+        <tr><th class="py-1">Date</th><th class="py-1">Event</th><th class="py-1 text-right">Amount</th></tr>
+      </thead>
+      <tbody>
+        {% for e in next30 %}
+        <tr class="border-b border-gray-100 dark:border-gray-700 last:border-0">
+          <td class="py-1 pr-2 whitespace-nowrap text-gray-600 dark:text-gray-400">{{ e.date }}</td>
+          <td class="py-1 pr-2">
+            {% if e.type == 'income' %}<span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1.5"></span>{% endif %}
+            {% if e.type == 'bill' %}<span class="inline-block w-2 h-2 rounded-full bg-red-500 mr-1.5"></span>{% endif %}
+            {% if e.type == 'savings' %}<span class="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1.5"></span>{% endif %}
+            {{ e.label }}
+          </td>
+          <td class="py-1 text-right font-medium {% if e.amount < 0 %}text-red-700 dark:text-red-400{% else %}text-green-700 dark:text-green-400{% endif %}">${{ "{:,.2f}".format(e.amount) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-gray-500 dark:text-gray-400 italic text-sm">No scheduled events in the next 30 days.</p>
+    {% endif %}
+  </div>
+
+  <div class="bg-white dark:bg-gray-800 p-4 rounded shadow">
+    <h2 class="font-semibold mb-2 text-gray-700 dark:text-gray-200">How the forecast is built</h2>
+    <ul class="text-sm text-gray-600 dark:text-gray-400 space-y-1 list-disc list-inside">
+      <li><strong>Start:</strong> latest <a href="/networth" class="text-blue-500 hover:underline">Net Worth</a> checking balance, rolled forward by transactions since.</li>
+      <li><strong>Income:</strong> auto-detected cadence from your paycheck history.</li>
+      <li><strong>Bills:</strong> from <a href="/recurring" class="text-blue-500 hover:underline">recurring bills</a> — set a Day-of-month for each.</li>
+      <li><strong>Goals:</strong> monthly contributions from <a href="/goals" class="text-blue-500 hover:underline">goals</a> (toggleable above).</li>
+      <li><strong>Everything else</strong> is approximated as a constant daily burn rate from last 3 months.</li>
+    </ul>
+    <p class="text-xs text-gray-500 dark:text-gray-400 mt-3">Tip: Conservative mode (p75) picks your busier months as the baseline. Use it to stress-test.</p>
+  </div>
+</div>
+
+<script>
+  const fc = {{ f | tojson }};
+  const theme = plotlyTheme();
+  const dateToBalance = Object.fromEntries(fc.dates.map((d, i) => [d, fc.balances[i]]));
+  const splitByType = (type) => fc.events.filter(e => e.type === type);
+  const eventTrace = (events, name, color, symbol) => ({
+    x: events.map(e => e.date),
+    y: events.map(e => dateToBalance[e.date]),
+    text: events.map(e => `${e.label}<br>${e.amount >= 0 ? "+" : ""}$${e.amount.toLocaleString(undefined, {maximumFractionDigits: 0})}<br>Balance after: $${(dateToBalance[e.date] || 0).toLocaleString(undefined, {maximumFractionDigits: 0})}`),
+    hoverinfo: "text",
+    mode: "markers",
+    type: "scatter",
+    name,
+    marker: { color, size: 9, symbol, line: { color: "white", width: 1 } },
+  });
+
+  const traces = [
+    {
+      x: fc.dates,
+      y: fc.balances,
+      type: "scatter",
+      mode: "lines",
+      name: "Projected balance",
+      line: { color: "#2563eb", width: 2 },
+      fill: "tozeroy",
+      fillcolor: "rgba(37,99,235,0.07)",
+      hovertemplate: "%{x}<br>$%{y:,.0f}<extra></extra>",
+    },
+    eventTrace(splitByType("income"), "Paycheck", "#16a34a", "triangle-up"),
+    eventTrace(splitByType("bill"), "Bill", "#dc2626", "triangle-down"),
+    eventTrace(splitByType("savings"), "Goal contribution", "#2563eb", "diamond"),
+  ];
+
+  const layout = {
+    margin: { l: 60, t: 10, r: 30, b: 50 },
+    legend: { orientation: "h", y: -0.15 },
+    shapes: [{
+      type: "line",
+      xref: "paper", x0: 0, x1: 1,
+      yref: "y", y0: 0, y1: 0,
+      line: { color: "#9ca3af", width: 1, dash: "dot" },
+    }],
+    ...theme,
+    yaxis: { title: "$", tickformat: ",.0f", ...(theme.yaxis || {}) },
+    xaxis: { ...(theme.xaxis || {}) },
+  };
+
+  Plotly.newPlot("fc-chart", traces, layout, { displayModeBar: false, responsive: true });
+</script>
+{% endblock %}

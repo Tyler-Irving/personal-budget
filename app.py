@@ -6,9 +6,17 @@ Run:
 Then open http://localhost:5000 in your browser.
 """
 from pathlib import Path
-from datetime import date
+from datetime import date, timedelta
+from collections import defaultdict
+import calendar
 import csv
+import hashlib
+import json
+import logging
+import os
 import shutil
+import urllib.error
+import urllib.request
 from flask import Flask, render_template, request, redirect, url_for, flash
 import pandas as pd
 
@@ -64,6 +72,11 @@ def load_goals() -> pd.DataFrame:
     df["Current Balance"] = df["Current Balance"].astype(float)
     df["Monthly Contribution"] = df["Monthly Contribution"].astype(float)
     df["Target Date"] = pd.to_datetime(df["Target Date"], errors="coerce")
+    # Day-of-month for forecast scheduling; missing/invalid → 1
+    if "Day" in df.columns:
+        df["Day"] = pd.to_numeric(df["Day"], errors="coerce").fillna(1).clip(1, 31).astype(int)
+    else:
+        df["Day"] = 1
     df["Progress"] = (df["Current Balance"] / df["Target Amount"]).fillna(0)
 
     today = pd.Timestamp(date.today())
@@ -187,7 +200,7 @@ def save_rules(rules: list[dict]) -> None:
 def save_goals(rows: list[dict]) -> None:
     path = DATA / "Goals.csv"
     fieldnames = ["Goal", "Target Amount", "Current Balance", "Target Date",
-                  "Monthly Contribution", "Progress %", "Months Remaining at Current Pace"]
+                  "Monthly Contribution", "Day", "Progress %", "Months Remaining at Current Pace"]
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
@@ -195,6 +208,11 @@ def save_goals(rows: list[dict]) -> None:
             target = float(r.get("Target Amount") or 0)
             current = float(r.get("Current Balance") or 0)
             monthly = float(r.get("Monthly Contribution") or 0)
+            day_raw = str(r.get("Day", "")).strip()
+            try:
+                day = max(1, min(31, int(day_raw))) if day_raw else 1
+            except ValueError:
+                day = 1
             progress = (current / target) if target else 0
             months_left = ((target - current) / monthly) if monthly else ""
             w.writerow({
@@ -203,6 +221,7 @@ def save_goals(rows: list[dict]) -> None:
                 "Current Balance": f"{current:.2f}",
                 "Target Date": r.get("Target Date", ""),
                 "Monthly Contribution": f"{monthly:.2f}",
+                "Day": day,
                 "Progress %": f"{progress:.4f}",
                 "Months Remaining at Current Pace": f"{months_left:.1f}" if months_left != "" else "",
             })
@@ -252,6 +271,594 @@ def summarize(df: pd.DataFrame) -> dict:
         "net": income - consumption - savings,
         "savings_rate": (savings / income) if income else 0,
     }
+
+
+# ----- Forecasting -------------------------------------------------------
+
+def starting_checking_balance(df: pd.DataFrame) -> tuple[float | None, "date | None", str | None]:
+    """Today's projected checking balance.
+
+    Reads the latest Net Worth snapshot's Checking value, then applies any
+    checking-account transactions that have hit since the snapshot date so
+    the forecast starts from a current-as-of-today number.
+
+    Returns (balance, snapshot_date, error_message).
+    """
+    try:
+        nw = load_net_worth()
+    except FileNotFoundError:
+        return None, None, "No Net Worth.csv yet"
+    if nw.empty:
+        return None, None, "Net Worth.csv has no rows"
+
+    latest = nw.iloc[-1]
+    asset_cols = ["Checking", "Savings", "Investments", "Other Assets", "Credit Cards", "Loans"]
+    if all(float(latest[c]) == 0 for c in asset_cols):
+        return None, None, "Net Worth.csv has the empty starter row only — fill it in at /networth"
+
+    snapshot_checking = float(latest["Checking"])
+    snapshot_date = latest["Date"].date() if hasattr(latest["Date"], "date") else None
+
+    # Roll the snapshot forward to today using transactions on checking accounts
+    if snapshot_date is not None:
+        since = df[df["Date"].dt.date > snapshot_date]
+        checking_txns = since[since["Account"].str.contains("checking", case=False, na=False)]
+        delta = float(checking_txns["Amount"].sum()) if not checking_txns.empty else 0.0
+    else:
+        delta = 0.0
+
+    return snapshot_checking + delta, snapshot_date, None
+
+
+def detect_income_cadence(df: pd.DataFrame, lookback_days: int = 120) -> dict:
+    """Find the user's pay schedule from recent Salary/Other Income history.
+
+    Returns {last_pay, interval_days, avg_amount, cadence, paydays_observed}
+    or an empty dict if not enough data.
+    """
+    income = df[df["Category"].isin(INCOME_CATS) & (df["Amount"] > 0)].copy()
+    cutoff = pd.Timestamp(date.today()) - pd.Timedelta(days=lookback_days)
+    income = income[income["Date"] >= cutoff]
+    if income.empty:
+        return {}
+
+    income["DateOnly"] = income["Date"].dt.normalize()
+    grouped = income.groupby("DateOnly", as_index=False)["Amount"].sum().sort_values("DateOnly")
+    if len(grouped) < 2:
+        return {
+            "last_pay": grouped["DateOnly"].iloc[-1].date(),
+            "interval_days": 30,
+            "avg_amount": float(grouped["Amount"].iloc[-1]),
+            "cadence": "unknown",
+            "paydays_observed": 1,
+        }
+
+    gaps = grouped["DateOnly"].diff().dt.days.dropna()
+    median_gap = float(gaps.median())
+
+    if 6 <= median_gap <= 8:
+        cadence, interval = "weekly", 7
+    elif 12 <= median_gap <= 16:
+        cadence, interval = "biweekly", 14
+    elif 27 <= median_gap <= 32:
+        cadence, interval = "monthly", int(round(median_gap))
+    else:
+        cadence, interval = "irregular", int(round(median_gap))
+
+    return {
+        "last_pay": grouped["DateOnly"].iloc[-1].date(),
+        "interval_days": interval,
+        "avg_amount": float(grouped["Amount"].mean()),
+        "cadence": cadence,
+        "paydays_observed": len(grouped),
+    }
+
+
+def average_daily_variable_burn(df: pd.DataFrame, bills: list[dict],
+                                months_back: int = 3, mode: str = "mean") -> float:
+    """Daily $ burn rate for everything that isn't a scheduled bill, income, or savings.
+
+    Uses last `months_back` *full* months. Mode "p75" picks the 75th-percentile
+    month for a more conservative forecast; "mean" averages.
+    Scheduled bills (those with a Day set) are subtracted because they're
+    forecasted as discrete events; counting them in both would double-bill.
+    """
+    today = pd.Timestamp(date.today())
+    month_start = today.replace(day=1)
+    cutoff = month_start - pd.DateOffset(months=months_back)
+    recent = df[(df["Date"] >= cutoff) & (df["Date"] < month_start)]
+    excluded = INCOME_CATS + SAVINGS_CATS + ["Transfer"]
+    outflows = recent[(~recent["Category"].isin(excluded)) & (recent["Amount"] < 0)]
+    if outflows.empty:
+        return 0.0
+
+    n_months = max(1, outflows["Date"].dt.to_period("M").nunique())
+    if mode == "p75":
+        monthly = outflows.groupby(outflows["Date"].dt.to_period("M"))["Amount"].sum().abs()
+        baseline_monthly = float(monthly.quantile(0.75)) if not monthly.empty else 0.0
+    else:
+        baseline_monthly = float(outflows["Amount"].abs().sum() / n_months)
+
+    scheduled_bills_total = sum(
+        float(b.get("Amount", 0)) for b in bills if str(b.get("Day", "")).strip().isdigit()
+    )
+    variable_monthly = max(0.0, baseline_monthly - scheduled_bills_total)
+    return variable_monthly / 30.44
+
+
+def _monthly_events_in_horizon(start: "date", horizon_end: "date",
+                               day_of_month: int, label: str,
+                               amount: float, event_type: str) -> list[dict]:
+    """Emit one event per month at day_of_month, clamped to month length, from start..horizon_end."""
+    events = []
+    year, month = start.year, start.month
+    while True:
+        last_day = calendar.monthrange(year, month)[1]
+        d = date(year, month, min(day_of_month, last_day))
+        if d > horizon_end:
+            break
+        if d >= start:
+            events.append({"date": d, "label": label, "amount": amount, "type": event_type})
+        month += 1
+        if month > 12:
+            month, year = 1, year + 1
+    return events
+
+
+def build_forecast(horizon_days: int = 180, include_savings: bool = True,
+                   mode: str = "mean") -> dict:
+    """Walk day-by-day projecting checking balance forward."""
+    df = load_transactions()
+    goals_df = load_goals()
+    bills = load_recurring_bills()
+    today = date.today()
+    horizon_end = today + timedelta(days=horizon_days)
+
+    warnings: list[str] = []
+
+    start_balance, snapshot_date, err = starting_checking_balance(df)
+    if start_balance is None:
+        warnings.append(err or "No starting balance available.")
+        start_balance = 0.0
+
+    income_info = detect_income_cadence(df)
+    income_events: list[dict] = []
+    if income_info:
+        d = income_info["last_pay"] + timedelta(days=income_info["interval_days"])
+        while d <= horizon_end:
+            if d >= today:
+                income_events.append({
+                    "date": d, "label": "Paycheck",
+                    "amount": income_info["avg_amount"], "type": "income",
+                })
+            d += timedelta(days=income_info["interval_days"])
+    else:
+        warnings.append("No paychecks in the last 120 days — add income history for an accurate forecast.")
+
+    bill_events: list[dict] = []
+    bills_no_day: list[str] = []
+    for b in bills:
+        day_str = str(b.get("Day", "")).strip()
+        if not day_str.isdigit():
+            bills_no_day.append(b["Name"])
+            continue
+        bill_events.extend(_monthly_events_in_horizon(
+            today, horizon_end, int(day_str), b["Name"], -float(b["Amount"]), "bill",
+        ))
+    if bills_no_day:
+        sample = ", ".join(bills_no_day[:3])
+        more = f" (+{len(bills_no_day) - 3} more)" if len(bills_no_day) > 3 else ""
+        warnings.append(f"{len(bills_no_day)} bill(s) have no Day set, excluded from event timeline: {sample}{more}")
+
+    savings_events: list[dict] = []
+    if include_savings and not goals_df.empty:
+        for _, g in goals_df.iterrows():
+            monthly = float(g["Monthly Contribution"])
+            if monthly <= 0:
+                continue
+            day = int(g["Day"]) if pd.notna(g.get("Day")) else 1
+            savings_events.extend(_monthly_events_in_horizon(
+                today, horizon_end, day, f"→ {g['Goal']}", -monthly, "savings",
+            ))
+
+    daily_burn = average_daily_variable_burn(df, bills, mode=mode)
+
+    by_date: dict = defaultdict(list)
+    for e in income_events + bill_events + savings_events:
+        by_date[e["date"]].append(e)
+
+    dates: list[str] = []
+    balances: list[float] = []
+    balance = start_balance
+    low_point = {"date": today, "balance": round(balance, 2)}
+    negative_days = 0
+
+    for i in range(horizon_days + 1):
+        d = today + timedelta(days=i)
+        for e in by_date.get(d, []):
+            balance += e["amount"]
+        if i > 0:
+            balance -= daily_burn
+        dates.append(d.strftime("%Y-%m-%d"))
+        balances.append(round(balance, 2))
+        if balance < low_point["balance"]:
+            low_point = {"date": d, "balance": round(balance, 2)}
+        if balance < 0:
+            negative_days += 1
+
+    all_events = sorted(income_events + bill_events + savings_events, key=lambda e: e["date"])
+
+    # Compute running balance at each event, useful for hover text on the chart
+    date_to_balance = dict(zip(dates, balances))
+
+    return {
+        "start_balance": round(start_balance, 2),
+        "start_date": snapshot_date.strftime("%Y-%m-%d") if snapshot_date else None,
+        "snapshot_age_days": (today - snapshot_date).days if snapshot_date else None,
+        "dates": dates,
+        "balances": balances,
+        "events": [{
+            "date": e["date"].strftime("%Y-%m-%d"),
+            "label": e["label"],
+            "amount": round(e["amount"], 2),
+            "type": e["type"],
+            "balance_after": date_to_balance.get(e["date"].strftime("%Y-%m-%d"), 0),
+        } for e in all_events],
+        "low_point": {
+            "date": low_point["date"].strftime("%Y-%m-%d") if hasattr(low_point["date"], "strftime") else str(low_point["date"]),
+            "balance": low_point["balance"],
+        },
+        "negative_days": negative_days,
+        "daily_burn": round(daily_burn, 2),
+        "horizon_days": horizon_days,
+        "include_savings": include_savings,
+        "mode": mode,
+        "warnings": warnings,
+        "income": income_info,
+    }
+
+
+# ----- Pace tracker ------------------------------------------------------
+
+def compute_pace(df: pd.DataFrame, today: "date",
+                 bills: list[dict], cats_df: pd.DataFrame) -> dict | None:
+    """Per-category month-to-date pace vs typical (or vs budget if set).
+
+    Bills are subtracted from both actual and baseline so pace tracks
+    *discretionary* spending only — otherwise paying rent on the 1st makes
+    Rent always look like it's running 200%+.
+
+    Returns None for the first 4 days of the month (pace is too noisy there).
+    """
+    excluded = set(INCOME_CATS + SAVINGS_CATS + ["Transfer", "Uncategorized"])
+
+    month_start = today.replace(day=1)
+    days_in_month = calendar.monthrange(today.year, today.month)[1]
+    days_elapsed = today.day
+    if days_elapsed < 5:
+        return None
+
+    today_ts = pd.Timestamp(today)
+    month_start_ts = pd.Timestamp(month_start)
+    mtd = df[(df["Date"] >= month_start_ts) & (df["Date"] <= today_ts) & (df["Amount"] < 0)]
+    mtd = mtd[~mtd["Category"].isin(excluded)]
+    actual_by_cat = mtd.groupby("Category")["Amount"].sum().abs().to_dict()
+
+    cutoff = month_start_ts - pd.DateOffset(months=3)
+    hist = df[(df["Date"] >= cutoff) & (df["Date"] < month_start_ts) & (df["Amount"] < 0)]
+    hist = hist[~hist["Category"].isin(excluded)]
+    n_months = hist["Date"].dt.to_period("M").nunique() if not hist.empty else 0
+    if n_months == 0:
+        avg_by_cat: dict = {}
+    else:
+        avg_by_cat = (hist.groupby("Category")["Amount"].sum().abs() / n_months).to_dict()
+
+    budget_by_cat: dict = {}
+    if "Monthly Budget" in cats_df.columns:
+        for _, row in cats_df.iterrows():
+            try:
+                v = float(row.get("Monthly Budget", 0) or 0)
+            except (ValueError, TypeError):
+                v = 0
+            if v > 0:
+                budget_by_cat[row["Category"]] = v
+
+    bills_by_cat: dict = defaultdict(list)
+    for b in bills:
+        cat = (b.get("Category") or "").strip()
+        if not cat:
+            continue
+        day_str = str(b.get("Day", "")).strip()
+        day = int(day_str) if day_str.isdigit() else None
+        bills_by_cat[cat].append({"amount": float(b.get("Amount", 0) or 0), "day": day})
+
+    rows = []
+    for cat in set(actual_by_cat) | set(avg_by_cat) | set(budget_by_cat):
+        baseline_monthly = budget_by_cat.get(cat) or avg_by_cat.get(cat, 0)
+        source = "budget" if cat in budget_by_cat else "avg"
+        if baseline_monthly <= 0:
+            continue
+
+        cat_bills = bills_by_cat.get(cat, [])
+        cat_bill_total = sum(b["amount"] for b in cat_bills)
+        cat_bill_paid_so_far = sum(
+            b["amount"] for b in cat_bills
+            if b["day"] is not None and b["day"] <= days_elapsed
+        )
+
+        baseline_discretionary = max(0.0, baseline_monthly - cat_bill_total)
+        if baseline_discretionary <= 0:
+            continue
+
+        actual_total = actual_by_cat.get(cat, 0.0)
+        actual_discretionary = max(0.0, actual_total - cat_bill_paid_so_far)
+        expected_so_far = baseline_discretionary * (days_elapsed / days_in_month)
+        if expected_so_far <= 0:
+            continue
+
+        # Hide tiny categories (less than $5 expected by now and $0 spent) to reduce noise
+        if expected_so_far < 5 and actual_discretionary == 0:
+            continue
+
+        pace_pct = actual_discretionary / expected_so_far
+        if pace_pct > 1.2:
+            bucket = "hot"
+        elif pace_pct < 0.6:
+            bucket = "cold"
+        else:
+            bucket = "normal"
+
+        rows.append({
+            "category": cat,
+            "actual": round(actual_discretionary, 2),
+            "expected": round(expected_so_far, 2),
+            "baseline_monthly": round(baseline_discretionary, 2),
+            "pace_pct": round(pace_pct, 2),
+            "bucket": bucket,
+            "source": source,
+        })
+
+    rows.sort(key=lambda r: -abs(r["pace_pct"] - 1.0))
+
+    return {
+        "rows": rows,
+        "days_elapsed": days_elapsed,
+        "days_in_month": days_in_month,
+        "hot": [r for r in rows if r["bucket"] == "hot"],
+        "normal": [r for r in rows if r["bucket"] == "normal"],
+        "cold": [r for r in rows if r["bucket"] == "cold"],
+    }
+
+
+# ----- Briefing (local LLM via Ollama) -----------------------------------
+
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+OLLAMA_TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT", "30"))
+BRIEFING_CACHE = DATA / "briefing_cache.json"
+
+BRIEFING_SYSTEM_PROMPT = (
+    "You are a personal-finance briefer. Write 2-4 sentences in a terse "
+    "financial-analyst style. Lead with whatever is most urgent. Be specific: "
+    "cite dollar amounts and dates from the data. Don't moralize. Don't say "
+    "\"consider\" or \"you might want to\". State facts, not advice. Mention "
+    "good news only when a category is meaningfully under pace. No bullets, "
+    "no headers, no preamble — just one paragraph."
+)
+
+
+def _merchant_key(desc: str) -> str:
+    if " - " in desc:
+        return desc.split(" - ")[0].strip().upper()
+    words = desc.split()
+    return " ".join(words[:3]).upper() if len(words) >= 3 else desc.strip().upper()
+
+
+def detect_anomalies(df: pd.DataFrame, bills: list[dict], today: "date") -> dict:
+    """Flag bill drift, new merchants, large charges, and missing bills."""
+    today_ts = pd.Timestamp(today)
+    month_start_ts = today_ts.normalize().replace(day=1)
+
+    mtd = df[(df["Date"] >= month_start_ts) & (df["Date"] <= today_ts) & (df["Amount"] < 0)]
+    mtd = mtd[~mtd["Category"].isin(["Transfer"])]
+    hist = df[df["Date"] < month_start_ts]
+
+    bill_drift = []
+    for b in bills:
+        expected = float(b.get("Amount", 0) or 0)
+        if expected <= 0:
+            continue
+        name = b["Name"]
+        cutoff = month_start_ts - pd.DateOffset(months=4)
+        matches = df[
+            (df["Date"] >= cutoff)
+            & df["Description"].str.contains(name, case=False, na=False, regex=False)
+            & (df["Amount"] < 0)
+        ]
+        if matches.empty:
+            continue
+        latest = matches.sort_values("Date", ascending=False).iloc[0]
+        latest_amt = abs(float(latest["Amount"]))
+        drift = (latest_amt - expected) / expected
+        if abs(drift) > 0.05:
+            bill_drift.append({
+                "name": name,
+                "configured": round(expected, 2),
+                "latest": round(latest_amt, 2),
+                "drift_pct": round(drift * 100, 1),
+                "date": latest["Date"].strftime("%Y-%m-%d"),
+            })
+
+    new_merchants = []
+    if not mtd.empty:
+        mtd_keys = set(mtd["Description"].apply(_merchant_key))
+        hist_keys = set(hist["Description"].apply(_merchant_key)) if not hist.empty else set()
+        for key in mtd_keys - hist_keys:
+            m = mtd[mtd["Description"].apply(_merchant_key) == key]
+            total = float(m["Amount"].abs().sum())
+            new_merchants.append({
+                "key": key,
+                "sample": m.iloc[0]["Description"][:60],
+                "total": round(total, 2),
+                "count": int(len(m)),
+            })
+        new_merchants.sort(key=lambda m: -m["total"])
+
+    cutoff6 = month_start_ts - pd.DateOffset(months=6)
+    hist6 = df[(df["Date"] >= cutoff6) & (df["Date"] < month_start_ts) & (df["Amount"] < 0)]
+    hist6 = hist6[~hist6["Category"].isin(["Transfer"])]
+    p95 = float(hist6["Amount"].abs().quantile(0.95)) if not hist6.empty else 0
+    large = mtd[mtd["Amount"].abs() > p95] if p95 > 0 else pd.DataFrame()
+    large_charges = [{
+        "date": r["Date"].strftime("%Y-%m-%d"),
+        "description": r["Description"][:60],
+        "amount": round(abs(float(r["Amount"])), 2),
+    } for _, r in large.sort_values("Amount").head(5).iterrows()]
+
+    missing_bills = []
+    for b in bills:
+        day_str = str(b.get("Day", "")).strip()
+        if not day_str.isdigit():
+            continue
+        day = int(day_str)
+        if day > today.day:
+            continue
+        name = b["Name"]
+        matches = mtd[mtd["Description"].str.contains(name, case=False, na=False, regex=False)]
+        if matches.empty:
+            missing_bills.append({
+                "name": name,
+                "expected_day": day,
+                "amount": round(float(b.get("Amount", 0) or 0), 2),
+            })
+
+    return {
+        "bill_drift": bill_drift,
+        "new_merchants": new_merchants[:10],
+        "large_charges": large_charges,
+        "missing_bills": missing_bills,
+        "p95_charge": round(p95, 2),
+    }
+
+
+def ollama_generate(user_prompt: str, system: str) -> tuple[str | None, str | None]:
+    """Returns (text, error). On any failure, text is None and error is a short message."""
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_prompt},
+        ],
+        "stream": False,
+        "options": {"temperature": 0.2},
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{OLLAMA_URL}/api/chat",
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            text = body.get("message", {}).get("content", "").strip()
+            return (text or None), (None if text else "Ollama returned an empty response")
+    except urllib.error.URLError as e:
+        return None, f"Ollama unreachable at {OLLAMA_URL} ({e.reason})"
+    except (TimeoutError, ConnectionError) as e:
+        return None, f"Ollama timed out: {e}"
+    except (json.JSONDecodeError, KeyError) as e:
+        return None, f"Ollama returned malformed JSON: {e}"
+
+
+def _briefing_cache_read() -> dict:
+    if not BRIEFING_CACHE.exists():
+        return {}
+    try:
+        return json.loads(BRIEFING_CACHE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _briefing_cache_write(entry: dict) -> None:
+    try:
+        BRIEFING_CACHE.write_text(json.dumps(entry))
+    except OSError as e:
+        app.logger.warning("Failed to write briefing cache: %s", e)
+
+
+def generate_briefing(today: "date", force: bool = False) -> dict:
+    """Compose a one-paragraph briefing. Cached per (date, input-hash).
+
+    Returns {text, source, error, model}.
+    source: 'cache' | 'fresh' | 'none'
+    """
+    try:
+        df = load_transactions()
+    except FileNotFoundError:
+        return {"text": None, "source": "none", "error": "No transactions yet.", "model": OLLAMA_MODEL}
+
+    bills = load_recurring_bills()
+    cats_df = load_categories()
+
+    forecast = build_forecast(horizon_days=60, include_savings=True, mode="mean")
+    pace = compute_pace(df, today, bills, cats_df)
+    anomalies = detect_anomalies(df, bills, today)
+
+    horizon_end = (today + timedelta(days=14)).isoformat()
+    next_events = [e for e in forecast["events"] if e["date"] <= horizon_end][:8]
+
+    payload = {
+        "today": today.isoformat(),
+        "checking_balance_now": forecast["start_balance"],
+        "forecast_low_point_60d": forecast["low_point"],
+        "forecast_negative_days_60d": forecast["negative_days"],
+        "next_14d_scheduled": [
+            {"date": e["date"], "label": e["label"], "amount": e["amount"]} for e in next_events
+        ],
+        "pace_hot": [
+            {"category": r["category"], "actual": r["actual"],
+             "expected": r["expected"], "pct_of_expected": int(r["pace_pct"] * 100)}
+            for r in (pace["hot"] if pace else [])
+        ],
+        "pace_cold": [
+            {"category": r["category"], "actual": r["actual"],
+             "expected": r["expected"], "pct_of_expected": int(r["pace_pct"] * 100)}
+            for r in (pace["cold"] if pace else [])
+        ][:3],
+        "bill_drift": anomalies["bill_drift"][:3],
+        "new_merchants_this_month": [
+            {"name": m["sample"], "total": m["total"]} for m in anomalies["new_merchants"][:3]
+        ],
+        "missing_bills_overdue": anomalies["missing_bills"][:3],
+    }
+
+    input_str = json.dumps(payload, sort_keys=True)
+    input_hash = hashlib.sha256(input_str.encode()).hexdigest()[:16]
+
+    cache = _briefing_cache_read()
+    entry = cache.get("entry") if isinstance(cache, dict) else None
+    if not force and entry and entry.get("date") == today.isoformat() and entry.get("hash") == input_hash:
+        return {"text": entry.get("text"), "source": "cache", "error": None, "model": entry.get("model", OLLAMA_MODEL)}
+
+    user_prompt = (
+        "Today's financial snapshot (JSON). Write the briefing as instructed:\n\n"
+        + json.dumps(payload, indent=2)
+    )
+    text, err = ollama_generate(user_prompt, BRIEFING_SYSTEM_PROMPT)
+    if not text:
+        return {"text": None, "source": "none", "error": err, "model": OLLAMA_MODEL}
+
+    _briefing_cache_write({
+        "entry": {
+            "date": today.isoformat(),
+            "hash": input_hash,
+            "text": text,
+            "model": OLLAMA_MODEL,
+            "generated_at": pd.Timestamp.now().isoformat(),
+        }
+    })
+    return {"text": text, "source": "fresh", "error": None, "model": OLLAMA_MODEL}
 
 
 @app.context_processor
@@ -332,6 +939,9 @@ def dashboard():
             "progress": float(g["Progress"]),
         })
 
+    pace = compute_pace(df, today.date(), bills, cats_df)
+    briefing = generate_briefing(today.date())
+
     return render_template(
         "dashboard.html",
         this_month=this_month, ytd=ytd, all_time=all_time,
@@ -340,7 +950,59 @@ def dashboard():
         nw_data=nw_data,
         goals=goals_list,
         budget_plan=budget_plan,
+        pace=pace,
+        briefing=briefing,
     )
+
+
+@app.route("/briefing/refresh", methods=["POST"])
+def briefing_refresh():
+    today = date.today()
+    result = generate_briefing(today, force=True)
+    if result.get("error"):
+        flash(f"Briefing refresh failed: {result['error']}")
+    else:
+        flash("Briefing refreshed.")
+    return redirect(request.referrer or url_for("dashboard"))
+
+
+@app.route("/categories/budget", methods=["POST"])
+def categories_budget():
+    cat = request.form.get("category", "").strip()
+    raw = request.form.get("budget", "").strip()
+    if not cat:
+        return redirect(request.referrer or url_for("dashboard"))
+    try:
+        budget = max(0.0, float(raw)) if raw else 0.0
+    except ValueError:
+        budget = 0.0
+
+    path = DATA / "Categories.csv"
+    cats = pd.read_csv(path)
+    if "Monthly Budget" not in cats.columns:
+        cats["Monthly Budget"] = 0
+    if cat in cats["Category"].values:
+        cats.loc[cats["Category"] == cat, "Monthly Budget"] = budget
+        cats.to_csv(path, index=False)
+        flash(f"Budget for {cat}: ${budget:,.0f}/mo" if budget else f"Cleared budget for {cat}")
+    return redirect(request.referrer or url_for("dashboard"))
+
+
+@app.route("/forecast")
+def forecast_view():
+    horizon = request.args.get("horizon", "180")
+    horizon_days = int(horizon) if horizon.isdigit() and int(horizon) in (30, 90, 180, 365) else 180
+    include_savings = request.args.get("include_savings", "on") == "on"
+    mode = request.args.get("mode", "mean")
+    if mode not in ("mean", "p75"):
+        mode = "mean"
+
+    forecast = build_forecast(
+        horizon_days=horizon_days,
+        include_savings=include_savings,
+        mode=mode,
+    )
+    return render_template("forecast.html", f=forecast)
 
 
 @app.route("/transactions")
@@ -487,6 +1149,7 @@ def goals_save():
             "Current Balance": request.form.get(f"current_{i}") or 0,
             "Target Date": request.form.get(f"date_{i}", "").strip(),
             "Monthly Contribution": request.form.get(f"monthly_{i}") or 0,
+            "Day": request.form.get(f"day_{i}", "").strip(),
         })
     save_goals(rows)
     flash(f"Saved {len(rows)} goals")
