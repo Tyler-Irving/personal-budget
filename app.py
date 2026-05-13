@@ -1237,6 +1237,20 @@ def transactions():
     cat_filter = request.args.get("category", "")
     search = request.args.get("search", "").strip().lower()
     account_filter = request.args.get("account", "")
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    amount_min = request.args.get("amount_min", "").strip()
+    amount_max = request.args.get("amount_max", "").strip()
+    type_filter = request.args.get("type", "")  # "", "income", "expense"
+    quick = request.args.get("quick", "")  # "", "uncategorized", "this_month", "last_30d"
+
+    today = date.today()
+    if quick == "this_month":
+        date_from = date_from or today.replace(day=1).isoformat()
+    elif quick == "last_30d":
+        date_from = date_from or (today - timedelta(days=30)).isoformat()
+    if quick == "uncategorized":
+        cat_filter = cat_filter or "Uncategorized"
 
     filtered = df.copy()
     if cat_filter:
@@ -1245,6 +1259,30 @@ def transactions():
         filtered = filtered[filtered["Account"] == account_filter]
     if search:
         filtered = filtered[filtered["Description"].str.lower().str.contains(search, na=False)]
+    if date_from:
+        try:
+            filtered = filtered[filtered["Date"] >= pd.Timestamp(date_from)]
+        except (ValueError, TypeError):
+            date_from = ""
+    if date_to:
+        try:
+            filtered = filtered[filtered["Date"] <= pd.Timestamp(date_to)]
+        except (ValueError, TypeError):
+            date_to = ""
+    if amount_min:
+        try:
+            filtered = filtered[filtered["Amount"].abs() >= float(amount_min)]
+        except ValueError:
+            amount_min = ""
+    if amount_max:
+        try:
+            filtered = filtered[filtered["Amount"].abs() <= float(amount_max)]
+        except ValueError:
+            amount_max = ""
+    if type_filter == "income":
+        filtered = filtered[filtered["Amount"] > 0]
+    elif type_filter == "expense":
+        filtered = filtered[filtered["Amount"] < 0]
 
     filtered = filtered.sort_values("Date", ascending=False)
 
@@ -1266,6 +1304,11 @@ def transactions():
         cat_filter=cat_filter,
         account_filter=account_filter,
         search=search,
+        date_from=date_from,
+        date_to=date_to,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        type_filter=type_filter,
         total=total,
         page=page,
         per_page=per_page,
