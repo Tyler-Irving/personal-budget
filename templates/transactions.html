@@ -3,10 +3,10 @@
 {% block content %}
 <h1 class="text-2xl font-bold mb-4">Transactions</h1>
 
-<form method="get" class="bg-white p-4 rounded shadow mb-4 flex flex-wrap gap-3 items-end">
+<form method="get" class="bg-white dark:bg-gray-800 p-4 rounded shadow mb-4 flex flex-wrap gap-3 items-end">
   <div>
-    <label class="block text-xs text-gray-600 mb-1">Category</label>
-    <select name="category" class="border rounded px-2 py-1">
+    <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Category</label>
+    <select name="category" class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1">
       <option value="">All</option>
       {% for c in categories %}
         <option value="{{ c }}" {% if c == cat_filter %}selected{% endif %}>{{ c }}</option>
@@ -14,8 +14,8 @@
     </select>
   </div>
   <div>
-    <label class="block text-xs text-gray-600 mb-1">Account</label>
-    <select name="account" class="border rounded px-2 py-1">
+    <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Account</label>
+    <select name="account" class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1">
       <option value="">All</option>
       {% for a in accounts %}
         <option value="{{ a }}" {% if a == account_filter %}selected{% endif %}>{{ a }}</option>
@@ -23,51 +23,51 @@
     </select>
   </div>
   <div class="flex-1 min-w-64">
-    <label class="block text-xs text-gray-600 mb-1">Search description</label>
-    <input type="text" name="search" value="{{ search }}" class="w-full border rounded px-2 py-1" placeholder="merchant name...">
+    <label class="block text-xs text-gray-600 dark:text-gray-400 mb-1">Search description</label>
+    <input type="text" name="search" value="{{ search }}" class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1" placeholder="merchant name...">
   </div>
   <button class="bg-blue-600 text-white px-4 py-1.5 rounded hover:bg-blue-700">Apply</button>
-  <a href="/transactions" class="text-gray-600 hover:text-gray-800 text-sm py-1.5">Clear</a>
+  <a href="/transactions" class="text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 text-sm py-1.5">Clear</a>
 </form>
 
-<form method="post" action="/categorize" class="bg-amber-50 border border-amber-200 p-4 rounded shadow mb-4">
-  <h2 class="font-semibold text-amber-900 mb-2">Bulk categorize Uncategorized by pattern</h2>
+<form method="post" action="/categorize" class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4 rounded shadow mb-4">
+  <h2 class="font-semibold text-amber-900 dark:text-amber-300 mb-2">Bulk categorize Uncategorized by pattern</h2>
   <div class="flex flex-wrap gap-3 items-end">
     <div class="flex-1 min-w-64">
-      <label class="block text-xs text-gray-700 mb-1">Description contains (case-insensitive)</label>
-      <input type="text" name="pattern" required class="w-full border rounded px-2 py-1" placeholder="e.g. STARBUCKS">
+      <label class="block text-xs text-gray-700 dark:text-gray-300 mb-1">Description contains (case-insensitive)</label>
+      <input type="text" name="pattern" required class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1" placeholder="e.g. STARBUCKS">
     </div>
     <div>
-      <label class="block text-xs text-gray-700 mb-1">Set category</label>
-      <select name="category" required class="border rounded px-2 py-1">
+      <label class="block text-xs text-gray-700 dark:text-gray-300 mb-1">Set category</label>
+      <select name="category" required class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1">
         {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
       </select>
     </div>
-    <label class="flex items-center gap-1.5 text-sm text-gray-700 mb-1.5">
+    <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 mb-1.5">
       <input type="checkbox" name="save_rule" checked> Save as rule
     </label>
     <button class="bg-amber-600 text-white px-4 py-1.5 rounded hover:bg-amber-700">Apply to all matching Uncategorized</button>
   </div>
 </form>
 
-<form method="post" action="/categorize" id="bulk-form" class="bg-blue-50 border border-blue-200 p-3 rounded shadow mb-2 flex flex-wrap gap-3 items-center text-sm">
-  <span class="text-blue-900 font-medium">Bulk by selection:</span>
-  <span class="text-blue-800"><span id="sel-count">0</span> selected</span>
-  <select name="category" required class="border rounded px-2 py-1 text-sm bg-white">
+<form method="post" action="/categorize" id="bulk-form" class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 p-3 rounded shadow mb-2 flex flex-wrap gap-3 items-center text-sm">
+  <span class="text-blue-900 dark:text-blue-300 font-medium">Bulk by selection:</span>
+  <span class="text-blue-800 dark:text-blue-400"><span id="sel-count">0</span> selected</span>
+  <select name="category" required class="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm bg-white dark:bg-gray-700 dark:text-gray-100">
     <option value="">Choose category...</option>
     {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
   </select>
   <button class="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Apply to selected</button>
-  <button type="button" onclick="clearSel()" class="text-blue-700 hover:underline">Clear</button>
+  <button type="button" onclick="clearSel()" class="text-blue-700 dark:text-blue-400 hover:underline">Clear</button>
 </form>
 
-<div class="text-sm text-gray-600 mb-2">
+<div class="text-sm text-gray-600 dark:text-gray-400 mb-2">
   {{ total }} matching {% if total == 1 %}transaction{% else %}transactions{% endif %}, page {{ page }} of {{ total_pages }}
 </div>
 
-<div class="bg-white rounded shadow overflow-hidden">
+<div class="bg-white dark:bg-gray-800 rounded shadow overflow-hidden">
 <table class="w-full text-sm">
-  <thead class="bg-gray-100 text-left text-xs uppercase text-gray-600">
+  <thead class="bg-gray-100 dark:bg-gray-700 text-left text-xs uppercase text-gray-600 dark:text-gray-300">
     <tr>
       <th class="px-2 py-2"><input type="checkbox" onchange="toggleAll(this)" title="Select all visible"></th>
       <th class="px-3 py-2">Date</th>
@@ -80,23 +80,23 @@
   </thead>
   <tbody>
     {% for r in rows %}
-    <tr class="border-t hover:bg-gray-50 {% if r.Category == 'Uncategorized' %}bg-amber-50{% endif %}">
+    <tr class="border-t border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 {% if r.Category == 'Uncategorized' %}bg-amber-50 dark:bg-amber-900/20{% endif %}">
       <td class="px-2 py-1"><input type="checkbox" name="indices" value="{{ r._idx }}" form="bulk-form" class="row-check" onchange="updateCount()"></td>
-      <td class="px-3 py-1 whitespace-nowrap text-gray-700">{{ r.Date.strftime("%Y-%m-%d") }}</td>
+      <td class="px-3 py-1 whitespace-nowrap text-gray-700 dark:text-gray-300">{{ r.Date.strftime("%Y-%m-%d") }}</td>
       <td class="px-3 py-1">{{ r.Description }}</td>
-      <td class="px-3 py-1 text-right whitespace-nowrap {% if r.Amount < 0 %}text-red-700{% else %}text-green-700{% endif %}">${{ "{:,.2f}".format(r.Amount) }}</td>
-      <td class="px-3 py-1 text-gray-600 whitespace-nowrap">{{ r.Account }}</td>
+      <td class="px-3 py-1 text-right whitespace-nowrap {% if r.Amount < 0 %}text-red-700 dark:text-red-400{% else %}text-green-700 dark:text-green-400{% endif %}">${{ "{:,.2f}".format(r.Amount) }}</td>
+      <td class="px-3 py-1 text-gray-600 dark:text-gray-400 whitespace-nowrap">{{ r.Account }}</td>
       <td class="px-3 py-1">
         <form method="post" action="/categorize" class="inline">
           <input type="hidden" name="idx" value="{{ r._idx }}">
-          <select name="category" onchange="this.form.submit()" class="border rounded px-1 py-0.5 text-xs bg-white">
+          <select name="category" onchange="this.form.submit()" class="border border-gray-300 dark:border-gray-600 rounded px-1 py-0.5 text-xs bg-white dark:bg-gray-700 dark:text-gray-100">
             {% for c in categories %}
               <option value="{{ c }}" {% if c == r.Category %}selected{% endif %}>{{ c }}</option>
             {% endfor %}
           </select>
         </form>
       </td>
-      <td class="px-3 py-1 text-gray-500 text-xs">{{ r.Notes }}</td>
+      <td class="px-3 py-1 text-gray-500 dark:text-gray-400 text-xs">{{ r.Notes }}</td>
     </tr>
     {% endfor %}
   </tbody>
@@ -125,10 +125,10 @@
   {% if search %}{% set _ = base_qs.append("search=" + search) %}{% endif %}
   {% set qs = base_qs | join("&") %}
   {% if page > 1 %}
-    <a href="?{{ qs }}{% if qs %}&{% endif %}page={{ page - 1 }}" class="px-3 py-1 bg-white border rounded hover:bg-gray-50">← Prev</a>
+    <a href="?{{ qs }}{% if qs %}&{% endif %}page={{ page - 1 }}" class="px-3 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700">← Prev</a>
   {% endif %}
   {% if page < total_pages %}
-    <a href="?{{ qs }}{% if qs %}&{% endif %}page={{ page + 1 }}" class="px-3 py-1 bg-white border rounded hover:bg-gray-50">Next →</a>
+    <a href="?{{ qs }}{% if qs %}&{% endif %}page={{ page + 1 }}" class="px-3 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700">Next →</a>
   {% endif %}
 </div>
 {% endblock %}

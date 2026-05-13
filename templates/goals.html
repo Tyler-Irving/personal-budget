@@ -2,12 +2,12 @@
 {% block title %}Goals{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-bold mb-4">Goals</h1>
-<p class="text-gray-600 text-sm mb-4">Edit your savings goals. Progress and months-to-completion are computed automatically when you save.</p>
+<p class="text-gray-600 dark:text-gray-400 text-sm mb-4">Edit your savings goals. Progress and months-to-completion are computed automatically when you save.</p>
 
 <form method="post" action="/goals/save" class="space-y-2">
-  <div class="bg-white rounded shadow overflow-hidden">
+  <div class="bg-white dark:bg-gray-800 rounded shadow overflow-hidden">
   <table class="w-full text-sm">
-    <thead class="bg-gray-100 text-left text-xs uppercase text-gray-600">
+    <thead class="bg-gray-100 dark:bg-gray-700 text-left text-xs uppercase text-gray-600 dark:text-gray-300">
       <tr>
         <th class="px-3 py-2">Goal</th>
         <th class="px-3 py-2">Target $</th>
@@ -21,38 +21,39 @@
       </tr>
     </thead>
     <tbody id="goal-rows">
+      {% set ipt = "border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1" %}
       {% for g in goals %}
-      <tr class="border-t">
-        <td class="px-2 py-1"><input name="goal_{{ loop.index0 }}" value="{{ g.Goal }}" class="w-full border rounded px-2 py-1"></td>
-        <td class="px-2 py-1"><input name="target_{{ loop.index0 }}" type="number" step="0.01" value="{{ '%.2f' | format(g['Target Amount']) }}" class="w-32 border rounded px-2 py-1"></td>
-        <td class="px-2 py-1"><input name="current_{{ loop.index0 }}" type="number" step="0.01" value="{{ '%.2f' | format(g['Current Balance']) }}" class="w-32 border rounded px-2 py-1"></td>
-        <td class="px-2 py-1"><input name="date_{{ loop.index0 }}" type="date" value="{{ g['Target Date'].strftime('%Y-%m-%d') if g['Target Date'] is not none and g['Target Date'] == g['Target Date'] else '' }}" class="border rounded px-2 py-1"></td>
-        <td class="px-2 py-1"><input name="monthly_{{ loop.index0 }}" type="number" step="0.01" value="{{ '%.2f' | format(g['Monthly Contribution']) }}" class="w-28 border rounded px-2 py-1"></td>
-        <td class="px-3 py-1 text-right font-medium {% if g['Required Monthly'] > g['Monthly Contribution'] %}text-red-700{% else %}text-gray-700{% endif %}">${{ "{:,.0f}".format(g['Required Monthly']) }}</td>
+      <tr class="border-t border-gray-200 dark:border-gray-700">
+        <td class="px-2 py-1"><input name="goal_{{ loop.index0 }}" value="{{ g.Goal }}" class="w-full {{ ipt }}"></td>
+        <td class="px-2 py-1"><input name="target_{{ loop.index0 }}" type="number" step="0.01" value="{{ '%.2f' | format(g['Target Amount']) }}" class="w-32 {{ ipt }}"></td>
+        <td class="px-2 py-1"><input name="current_{{ loop.index0 }}" type="number" step="0.01" value="{{ '%.2f' | format(g['Current Balance']) }}" class="w-32 {{ ipt }}"></td>
+        <td class="px-2 py-1"><input name="date_{{ loop.index0 }}" type="date" value="{{ g['Target Date'].strftime('%Y-%m-%d') if g['Target Date'] is not none and g['Target Date'] == g['Target Date'] else '' }}" class="{{ ipt }}"></td>
+        <td class="px-2 py-1"><input name="monthly_{{ loop.index0 }}" type="number" step="0.01" value="{{ '%.2f' | format(g['Monthly Contribution']) }}" class="w-28 {{ ipt }}"></td>
+        <td class="px-3 py-1 text-right font-medium {% if g['Required Monthly'] > g['Monthly Contribution'] %}text-red-700 dark:text-red-400{% else %}text-gray-700 dark:text-gray-200{% endif %}">${{ "{:,.0f}".format(g['Required Monthly']) }}</td>
         <td class="px-3 py-1 text-center">
           {% if g['On Track'] %}
-            <span class="bg-green-100 text-green-800 px-2 py-0.5 rounded text-xs font-medium">On track</span>
+            <span class="bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300 px-2 py-0.5 rounded text-xs font-medium">On track</span>
           {% else %}
-            <span class="bg-red-100 text-red-800 px-2 py-0.5 rounded text-xs font-medium" title="Short by ${{ '%.0f' | format(g['Shortfall']) }}/mo">Short ${{ "{:,.0f}".format(g['Shortfall']) }}</span>
+            <span class="bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 px-2 py-0.5 rounded text-xs font-medium" title="Short by ${{ '%.0f' | format(g['Shortfall']) }}/mo">Short ${{ "{:,.0f}".format(g['Shortfall']) }}</span>
           {% endif %}
         </td>
-        <td class="px-3 py-1 text-right text-gray-600">{{ "{:.0%}".format(g.Progress) }}</td>
+        <td class="px-3 py-1 text-right text-gray-600 dark:text-gray-400">{{ "{:.0%}".format(g.Progress) }}</td>
         <td class="px-2 py-1 text-right">
-          <button type="button" onclick="removeRow(this)" class="text-red-600 hover:text-red-800 text-xs">Delete</button>
+          <button type="button" onclick="removeRow(this)" class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-xs">Delete</button>
         </td>
       </tr>
       {% endfor %}
-      <tr class="border-t bg-gray-50" id="new-row-template" style="display:none">
-        <td class="px-2 py-1"><input name="goal_NEW" placeholder="New goal" class="w-full border rounded px-2 py-1"></td>
-        <td class="px-2 py-1"><input name="target_NEW" type="number" step="0.01" placeholder="0" class="w-32 border rounded px-2 py-1"></td>
-        <td class="px-2 py-1"><input name="current_NEW" type="number" step="0.01" placeholder="0" class="w-32 border rounded px-2 py-1"></td>
-        <td class="px-2 py-1"><input name="date_NEW" type="date" class="border rounded px-2 py-1"></td>
-        <td class="px-2 py-1"><input name="monthly_NEW" type="number" step="0.01" placeholder="0" class="w-28 border rounded px-2 py-1"></td>
-        <td class="px-3 py-1 text-right text-gray-400">—</td>
-        <td class="px-3 py-1 text-center text-gray-400">—</td>
-        <td class="px-3 py-1 text-right text-gray-400">—</td>
+      <tr class="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/40" id="new-row-template" style="display:none">
+        <td class="px-2 py-1"><input name="goal_NEW" placeholder="New goal" class="w-full {{ ipt }}"></td>
+        <td class="px-2 py-1"><input name="target_NEW" type="number" step="0.01" placeholder="0" class="w-32 {{ ipt }}"></td>
+        <td class="px-2 py-1"><input name="current_NEW" type="number" step="0.01" placeholder="0" class="w-32 {{ ipt }}"></td>
+        <td class="px-2 py-1"><input name="date_NEW" type="date" class="{{ ipt }}"></td>
+        <td class="px-2 py-1"><input name="monthly_NEW" type="number" step="0.01" placeholder="0" class="w-28 {{ ipt }}"></td>
+        <td class="px-3 py-1 text-right text-gray-400 dark:text-gray-500">—</td>
+        <td class="px-3 py-1 text-center text-gray-400 dark:text-gray-500">—</td>
+        <td class="px-3 py-1 text-right text-gray-400 dark:text-gray-500">—</td>
         <td class="px-2 py-1 text-right">
-          <button type="button" onclick="removeRow(this)" class="text-red-600 hover:text-red-800 text-xs">Delete</button>
+          <button type="button" onclick="removeRow(this)" class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 text-xs">Delete</button>
         </td>
       </tr>
     </tbody>
@@ -60,7 +61,7 @@
   </div>
   <input type="hidden" name="count" id="count-input" value="{{ goals | length }}">
   <div class="flex gap-2 mt-3">
-    <button type="button" onclick="addRow()" class="bg-gray-200 text-gray-800 px-4 py-1.5 rounded hover:bg-gray-300">+ Add row</button>
+    <button type="button" onclick="addRow()" class="bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-4 py-1.5 rounded hover:bg-gray-300 dark:hover:bg-gray-600">+ Add row</button>
     <button class="bg-blue-600 text-white px-4 py-1.5 rounded hover:bg-blue-700">Save</button>
   </div>
 </form>

@@ -4,50 +4,50 @@
 <div class="flex items-center justify-between mb-4">
   <h1 class="text-2xl font-bold">{{ yyyymm }}</h1>
   <div class="flex gap-2 items-center text-sm">
-    {% if prev_month %}<a href="/month/{{ prev_month }}" class="px-3 py-1 bg-white border rounded hover:bg-gray-50">← {{ prev_month }}</a>{% endif %}
-    <select onchange="location.href='/month/' + this.value" class="border rounded px-2 py-1">
+    {% if prev_month %}<a href="/month/{{ prev_month }}" class="px-3 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700">← {{ prev_month }}</a>{% endif %}
+    <select onchange="location.href='/month/' + this.value" class="border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1">
       {% for m in all_months %}<option value="{{ m }}" {% if m == yyyymm %}selected{% endif %}>{{ m }}</option>{% endfor %}
     </select>
-    {% if next_month %}<a href="/month/{{ next_month }}" class="px-3 py-1 bg-white border rounded hover:bg-gray-50">{{ next_month }} →</a>{% endif %}
+    {% if next_month %}<a href="/month/{{ next_month }}" class="px-3 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700">{{ next_month }} →</a>{% endif %}
   </div>
 </div>
 
 <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-  <div class="bg-white p-3 rounded shadow text-center">
-    <div class="text-xs text-gray-600">Income</div>
-    <div class="text-lg font-semibold text-green-700">${{ "{:,.0f}".format(summary.income) }}</div>
+  <div class="bg-white dark:bg-gray-800 p-3 rounded shadow text-center">
+    <div class="text-xs text-gray-600 dark:text-gray-400">Income</div>
+    <div class="text-lg font-semibold text-green-700 dark:text-green-400">${{ "{:,.0f}".format(summary.income) }}</div>
   </div>
-  <div class="bg-white p-3 rounded shadow text-center">
-    <div class="text-xs text-gray-600">Consumption</div>
-    <div class="text-lg font-semibold text-red-700">${{ "{:,.0f}".format(summary.consumption) }}</div>
+  <div class="bg-white dark:bg-gray-800 p-3 rounded shadow text-center">
+    <div class="text-xs text-gray-600 dark:text-gray-400">Consumption</div>
+    <div class="text-lg font-semibold text-red-700 dark:text-red-400">${{ "{:,.0f}".format(summary.consumption) }}</div>
   </div>
-  <div class="bg-white p-3 rounded shadow text-center">
-    <div class="text-xs text-gray-600">Savings</div>
-    <div class="text-lg font-semibold text-blue-700">${{ "{:,.0f}".format(summary.savings) }}</div>
+  <div class="bg-white dark:bg-gray-800 p-3 rounded shadow text-center">
+    <div class="text-xs text-gray-600 dark:text-gray-400">Savings</div>
+    <div class="text-lg font-semibold text-blue-700 dark:text-blue-400">${{ "{:,.0f}".format(summary.savings) }}</div>
   </div>
-  <div class="bg-white p-3 rounded shadow text-center">
-    <div class="text-xs text-gray-600">Surplus</div>
-    <div class="text-lg font-semibold {% if summary.net < 0 %}text-red-700{% else %}text-gray-800{% endif %}">${{ "{:,.0f}".format(summary.net) }}</div>
+  <div class="bg-white dark:bg-gray-800 p-3 rounded shadow text-center">
+    <div class="text-xs text-gray-600 dark:text-gray-400">Surplus</div>
+    <div class="text-lg font-semibold {% if summary.net < 0 %}text-red-700 dark:text-red-400{% else %}text-gray-800 dark:text-gray-200{% endif %}">${{ "{:,.0f}".format(summary.net) }}</div>
   </div>
-  <div class="bg-white p-3 rounded shadow text-center">
-    <div class="text-xs text-gray-600">Savings Rate</div>
+  <div class="bg-white dark:bg-gray-800 p-3 rounded shadow text-center">
+    <div class="text-xs text-gray-600 dark:text-gray-400">Savings Rate</div>
     <div class="text-lg font-semibold">{{ "{:.0%}".format(summary.savings_rate) }}</div>
   </div>
 </div>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-  <div class="bg-white p-4 rounded shadow">
-    <h2 class="font-semibold mb-2 text-gray-700">Spending by Category</h2>
+  <div class="bg-white dark:bg-gray-800 p-4 rounded shadow">
+    <h2 class="font-semibold mb-2 text-gray-700 dark:text-gray-200">Spending by Category</h2>
     <div id="cat-chart" style="height:350px"></div>
   </div>
-  <div class="bg-white p-4 rounded shadow">
-    <h2 class="font-semibold mb-2 text-gray-700">Top Merchants</h2>
+  <div class="bg-white dark:bg-gray-800 p-4 rounded shadow">
+    <h2 class="font-semibold mb-2 text-gray-700 dark:text-gray-200">Top Merchants</h2>
     <table class="w-full text-sm">
       <tbody>
         {% for desc, amt in top_merch.items() %}
-        <tr class="border-b last:border-0">
+        <tr class="border-b border-gray-200 dark:border-gray-700 last:border-0">
           <td class="py-1 pr-2 truncate" style="max-width: 0">{{ desc }}</td>
-          <td class="py-1 text-right font-medium text-red-700 whitespace-nowrap">${{ "{:,.2f}".format(amt) }}</td>
+          <td class="py-1 text-right font-medium text-red-700 dark:text-red-400 whitespace-nowrap">${{ "{:,.2f}".format(amt) }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -55,10 +55,10 @@
   </div>
 </div>
 
-<div class="bg-white rounded shadow overflow-hidden">
-  <h2 class="font-semibold p-3 text-gray-700 border-b">All transactions ({{ rows | length }})</h2>
+<div class="bg-white dark:bg-gray-800 rounded shadow overflow-hidden">
+  <h2 class="font-semibold p-3 text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-700">All transactions ({{ rows | length }})</h2>
   <table class="w-full text-sm">
-    <thead class="bg-gray-50 text-left text-xs uppercase text-gray-600">
+    <thead class="bg-gray-50 dark:bg-gray-700 text-left text-xs uppercase text-gray-600 dark:text-gray-300">
       <tr>
         <th class="px-3 py-2">Date</th>
         <th class="px-3 py-2">Description</th>
@@ -69,15 +69,15 @@
     </thead>
     <tbody>
       {% for r in rows %}
-      <tr class="border-t hover:bg-gray-50 {% if r.Category == 'Uncategorized' %}bg-amber-50{% endif %}">
+      <tr class="border-t border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 {% if r.Category == 'Uncategorized' %}bg-amber-50 dark:bg-amber-900/20{% endif %}">
         <td class="px-3 py-1 whitespace-nowrap">{{ r.Date.strftime("%Y-%m-%d") }}</td>
         <td class="px-3 py-1">{{ r.Description }}</td>
-        <td class="px-3 py-1 text-right whitespace-nowrap {% if r.Amount < 0 %}text-red-700{% else %}text-green-700{% endif %}">${{ "{:,.2f}".format(r.Amount) }}</td>
-        <td class="px-3 py-1 text-gray-600 whitespace-nowrap">{{ r.Account }}</td>
+        <td class="px-3 py-1 text-right whitespace-nowrap {% if r.Amount < 0 %}text-red-700 dark:text-red-400{% else %}text-green-700 dark:text-green-400{% endif %}">${{ "{:,.2f}".format(r.Amount) }}</td>
+        <td class="px-3 py-1 text-gray-600 dark:text-gray-400 whitespace-nowrap">{{ r.Account }}</td>
         <td class="px-3 py-1">
           <form method="post" action="/categorize" class="inline">
             <input type="hidden" name="idx" value="{{ r._idx }}">
-            <select name="category" onchange="this.form.submit()" class="border rounded px-1 py-0.5 text-xs bg-white">
+            <select name="category" onchange="this.form.submit()" class="border border-gray-300 dark:border-gray-600 rounded px-1 py-0.5 text-xs bg-white dark:bg-gray-700 dark:text-gray-100">
               {% for c in categories %}<option value="{{ c }}" {% if c == r.Category %}selected{% endif %}>{{ c }}</option>{% endfor %}
             </select>
           </form>
@@ -90,6 +90,7 @@
 
 <script>
   const catData = {{ cat_break | tojson }};
+  const theme = plotlyTheme();
   Plotly.newPlot("cat-chart", [{
     type: "bar", orientation: "h",
     x: Object.values(catData).reverse(),
@@ -98,7 +99,10 @@
     text: Object.values(catData).reverse().map(v => "$" + v.toLocaleString(undefined, {maximumFractionDigits:0})),
     textposition: "outside",
   }], {
-    margin: { l: 130, t: 10, r: 70, b: 30 }
+    margin: { l: 130, t: 10, r: 70, b: 30 },
+    ...theme,
+    xaxis: { ...(theme.xaxis || {}) },
+    yaxis: { ...(theme.yaxis || {}) },
   }, { displayModeBar: false });
 </script>
 {% endblock %}

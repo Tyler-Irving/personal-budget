@@ -4,24 +4,63 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Budget — {% block title %}{% endblock %}</title>
+  <script>
+    // Apply theme before Tailwind loads to prevent a flash of light content
+    (function() {
+      const stored = localStorage.getItem('theme');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (stored === 'dark' || (!stored && prefersDark)) {
+        document.documentElement.classList.add('dark');
+      }
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { darkMode: 'class' };
+  </script>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script>
+    // Plotly theme overrides for dark mode — spread into each chart's layout
+    function plotlyTheme() {
+      if (document.documentElement.classList.contains('dark')) {
+        return {
+          paper_bgcolor: 'rgba(0,0,0,0)',
+          plot_bgcolor: 'rgba(0,0,0,0)',
+          font: { color: '#d1d5db' },
+          xaxis: { gridcolor: '#374151', linecolor: '#4b5563', zerolinecolor: '#4b5563' },
+          yaxis: { gridcolor: '#374151', linecolor: '#4b5563', zerolinecolor: '#4b5563' },
+          legend: { font: { color: '#d1d5db' } },
+        };
+      }
+      return {};
+    }
+    function toggleTheme() {
+      const isDark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('theme', isDark ? 'dark' : 'light');
+      location.reload();
+    }
+  </script>
 </head>
-<body class="bg-gray-50 text-gray-900">
-  <nav class="bg-white border-b sticky top-0 z-10">
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+  <nav class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10">
     <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-5 flex-wrap">
       <a href="/" class="font-bold text-lg">Budget</a>
-      <a href="/" class="text-gray-700 hover:text-blue-600">Dashboard</a>
-      <a href="/transactions" class="text-gray-700 hover:text-blue-600">Transactions</a>
-      <a href="/recurring" class="text-gray-700 hover:text-blue-600">Recurring</a>
-      <a href="/rules" class="text-gray-700 hover:text-blue-600">Rules</a>
-      <a href="/goals" class="text-gray-700 hover:text-blue-600">Goals</a>
-      <a href="/networth" class="text-gray-700 hover:text-blue-600">Net Worth</a>
-      {% if unc_count and unc_count > 0 %}
-        <a href="/transactions?category=Uncategorized" class="ml-auto bg-amber-100 text-amber-800 px-3 py-1 rounded text-sm hover:bg-amber-200">
-          {{ unc_count }} uncategorized
-        </a>
-      {% endif %}
+      <a href="/" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Dashboard</a>
+      <a href="/transactions" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Transactions</a>
+      <a href="/recurring" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Recurring</a>
+      <a href="/rules" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Rules</a>
+      <a href="/goals" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Goals</a>
+      <a href="/networth" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Net Worth</a>
+      <div class="ml-auto flex items-center gap-3">
+        {% if unc_count and unc_count > 0 %}
+          <a href="/transactions?category=Uncategorized" class="bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 px-3 py-1 rounded text-sm hover:bg-amber-200 dark:hover:bg-amber-900/60">
+            {{ unc_count }} uncategorized
+          </a>
+        {% endif %}
+        <button onclick="toggleTheme()" class="border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-3 py-1 text-xs" title="Toggle theme">
+          <span class="dark:hidden">Dark</span><span class="hidden dark:inline">Light</span>
+        </button>
+      </div>
     </div>
   </nav>
   <main class="max-w-7xl mx-auto px-4 py-6">
@@ -29,7 +68,7 @@
       {% if messages %}
         <div class="mb-4 space-y-1">
           {% for msg in messages %}
-            <div class="bg-green-50 border border-green-200 text-green-800 px-3 py-2 rounded text-sm">{{ msg }}</div>
+            <div class="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-300 px-3 py-2 rounded text-sm">{{ msg }}</div>
           {% endfor %}
         </div>
       {% endif %}
