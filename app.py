@@ -1070,7 +1070,7 @@ def dashboard():
     three_mo_ago = (month_start - pd.DateOffset(months=3))
     last_3 = df[(df["Date"] >= three_mo_ago) & (df["Date"] < month_start) & df["Category"].isin(INCOME_CATS)]
     avg_income = float(last_3["Amount"].sum() / 3) if not last_3.empty else 0.0
-    fixed_bills_total = sum(b["Amount"] for b in bills)
+    fixed_bills_total = sum(monthly_equivalent(b) for b in bills)
     required_savings_total = float(goals_df["Required Monthly"].sum())
     available = avg_income - fixed_bills_total - required_savings_total
     budget_plan = {
@@ -1082,12 +1082,42 @@ def dashboard():
         "n_goals": len(goals_df),
     }
 
-    ytd_df = df[(df["Date"] >= year_start) & (df["Date"] <= today)]
-    cat_spend = (
-        ytd_df[(ytd_df["Amount"] < 0) & (~ytd_df["Category"].isin(["Transfer"]))]
-        .groupby("Category")["Amount"].sum().abs()
-        .sort_values(ascending=True)
-    )
+    def _cat_spend_for(start, end) -> dict:
+        win = df[(df["Date"] >= start) & (df["Date"] <= end)]
+        s = (
+            win[(win["Amount"] < 0) & (~win["Category"].isin(["Transfer"]))]
+            .groupby("Category")["Amount"].sum().abs()
+            .sort_values(ascending=False)
+        )
+        return {k: float(v) for k, v in s.items()}
+
+    earliest = df["Date"].min() if not df.empty else today
+    cat_spend_by_range = {
+        "this_month": _cat_spend_for(month_start, today),
+        "last_3_mo": _cat_spend_for(today - pd.DateOffset(months=3), today),
+        "ytd": _cat_spend_for(year_start, today),
+        "last_12_mo": _cat_spend_for(today - pd.DateOffset(months=12), today),
+        "all_time": _cat_spend_for(earliest, today),
+    }
+
+    # Stacked-bar trend: last 12 months × top-N categories (+ Other)
+    twelve_mo_ago = today - pd.DateOffset(months=12)
+    trend_df = df[(df["Date"] >= twelve_mo_ago) & (df["Date"] <= today) & (df["Amount"] < 0)].copy()
+    trend_df = trend_df[~trend_df["Category"].isin(["Transfer"] + SAVINGS_CATS + INCOME_CATS)]
+    trend_df["Month"] = trend_df["Date"].dt.to_period("M").astype(str)
+    trend_months = sorted(trend_df["Month"].unique())
+    cat_totals = trend_df.groupby("Category")["Amount"].sum().abs().sort_values(ascending=False)
+    top_cats = cat_totals.head(8).index.tolist()
+    trend_df["CatBucket"] = trend_df["Category"].where(trend_df["Category"].isin(top_cats), "Other")
+    pivot = trend_df.groupby(["Month", "CatBucket"])["Amount"].sum().abs().unstack(fill_value=0)
+    pivot = pivot.reindex(index=trend_months, fill_value=0)
+    cat_order = top_cats + (["Other"] if "Other" in pivot.columns else [])
+    pivot = pivot.reindex(columns=cat_order, fill_value=0)
+    cat_by_month = {
+        "months": trend_months,
+        "categories": cat_order,
+        "series": {cat: [float(pivot.at[m, cat]) for m in trend_months] for cat in cat_order},
+    }
 
     df_recent = df[df["Date"] >= today - pd.Timedelta(days=365)].copy()
     df_recent["Month"] = df_recent["Date"].dt.to_period("M").astype(str)
@@ -1125,7 +1155,8 @@ def dashboard():
     return render_template(
         "dashboard.html",
         this_month=this_month, ytd=ytd, all_time=all_time,
-        cat_spend={k: float(v) for k, v in cat_spend.items()},
+        cat_spend_by_range=cat_spend_by_range,
+        cat_by_month=cat_by_month,
         monthly_data=monthly_data,
         nw_data=nw_data,
         goals=goals_list,
@@ -1133,6 +1164,18 @@ def dashboard():
         pace=pace,
         briefing=briefing,
     )
+
+
+@app.route("/data/reimport", methods=["POST"])
+def data_reimport():
+    """Re-run normalize.py against Transaction CSVs/. Returns JSON for the toast UI."""
+    try:
+        result = normalize.run_import()
+    except Exception as e:
+        logging.exception("reimport failed")
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+    status = 200 if result["ok"] else 422
+    return jsonify(result), status
 
 
 @app.route("/briefing/refresh", methods=["POST"])

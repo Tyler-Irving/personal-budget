@@ -118,15 +118,39 @@
   {% endif %}
 </div>
 
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-  <div class="bg-white dark:bg-gray-800 p-4 rounded shadow">
-    <h2 class="font-semibold mb-2 text-gray-700 dark:text-gray-200">YTD Spending by Category</h2>
-    <div id="cat-chart" style="height:420px"></div>
+{% set pill_btn = "px-2.5 py-1 text-xs font-medium rounded transition-colors" %}
+{% set pill_off = "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700" %}
+<div class="bg-white dark:bg-gray-800 p-4 rounded shadow mb-6">
+  <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-2 mb-3">
+    <h2 class="font-semibold text-gray-700 dark:text-gray-200">Spending by Category</h2>
+    <div class="flex flex-wrap items-center gap-3">
+      <div id="cat-range-pills" class="inline-flex rounded bg-gray-100 dark:bg-gray-700 p-0.5" role="tablist">
+        <button data-range="this_month" class="{{ pill_btn }} {{ pill_off }}">This Month</button>
+        <button data-range="last_3_mo" class="{{ pill_btn }} {{ pill_off }}">Last 3 Mo</button>
+        <button data-range="ytd" class="{{ pill_btn }} bg-white dark:bg-gray-800 shadow text-gray-900 dark:text-gray-100">YTD</button>
+        <button data-range="last_12_mo" class="{{ pill_btn }} {{ pill_off }}">Last 12 Mo</button>
+        <button data-range="all_time" class="{{ pill_btn }} {{ pill_off }}">All Time</button>
+      </div>
+      <div id="cat-type-pills" class="inline-flex rounded bg-gray-100 dark:bg-gray-700 p-0.5" role="tablist">
+        <button data-type="donut" class="{{ pill_btn }} bg-white dark:bg-gray-800 shadow text-gray-900 dark:text-gray-100">Donut</button>
+        <button data-type="treemap" class="{{ pill_btn }} {{ pill_off }}">Treemap</button>
+      </div>
+    </div>
   </div>
+  <div id="cat-total" class="text-xs text-gray-500 dark:text-gray-400 mb-2"></div>
+  <div id="cat-chart" style="height:640px"></div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
   <div class="bg-white dark:bg-gray-800 p-4 rounded shadow">
     <h2 class="font-semibold mb-2 text-gray-700 dark:text-gray-200">Monthly Income vs Expenses vs Savings (last 12 mo)</h2>
     <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">Tip: click any point to drill into that month.</p>
     <div id="trend-chart" style="height:400px"></div>
+  </div>
+  <div class="bg-white dark:bg-gray-800 p-4 rounded shadow">
+    <h2 class="font-semibold mb-2 text-gray-700 dark:text-gray-200">Spending Mix by Month (last 12 mo)</h2>
+    <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">Stacked bars — top 8 categories plus "Other". Click a bar to drill into the month.</p>
+    <div id="stack-chart" style="height:400px"></div>
   </div>
 </div>
 
@@ -153,24 +177,107 @@
 </div>
 
 <script>
-  const catData = {{ cat_spend | tojson }};
+  const catByRange = {{ cat_spend_by_range | tojson }};
+  const catByMonth = {{ cat_by_month | tojson }};
   const trendData = {{ monthly_data | tojson }};
   const nwData = {{ nw_data | tojson }};
   const theme = plotlyTheme();
 
-  Plotly.newPlot("cat-chart", [{
-    type: "bar", orientation: "h",
-    x: Object.values(catData),
-    y: Object.keys(catData),
-    marker: { color: "#ef4444" },
-    text: Object.values(catData).map(v => "$" + v.toLocaleString(undefined, {maximumFractionDigits:0})),
-    textposition: "outside",
-  }], {
-    margin: { l: 150, t: 10, r: 80, b: 40 },
-    ...theme,
-    xaxis: { title: "$", ...(theme.xaxis || {}) },
-    yaxis: { ...(theme.yaxis || {}) },
-  }, { displayModeBar: false });
+  // Distinct hues so donut/treemap/stacked-bar share a palette
+  const CAT_PALETTE = [
+    "#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6",
+    "#ec4899", "#14b8a6", "#f97316", "#6366f1", "#84cc16",
+    "#06b6d4", "#a855f7", "#eab308",
+  ];
+
+  let catState = { range: "ytd", type: "donut" };
+
+  function fmtUSD(v) { return "$" + v.toLocaleString(undefined, { maximumFractionDigits: 0 }); }
+
+  function renderCatChart() {
+    const data = catByRange[catState.range] || {};
+    const labels = Object.keys(data);
+    const values = Object.values(data);
+    const total = values.reduce((a, b) => a + b, 0);
+    document.getElementById("cat-total").textContent =
+      labels.length ? `${labels.length} categories · ${fmtUSD(total)} total` : "No spending in this range.";
+
+    const colors = labels.map((_, i) => CAT_PALETTE[i % CAT_PALETTE.length]);
+    let trace;
+    if (catState.type === "treemap") {
+      trace = {
+        type: "treemap",
+        labels: labels,
+        parents: labels.map(() => ""),
+        values: values,
+        textinfo: "label+value+percent root",
+        texttemplate: "%{label}<br>$%{value:,.0f}<br>%{percentRoot}",
+        hovertemplate: "%{label}<br>$%{value:,.2f}<br>%{percentRoot} of total<extra></extra>",
+        marker: { colors: colors },
+      };
+    } else {
+      trace = {
+        type: "pie", hole: 0.45,
+        labels: labels, values: values,
+        textinfo: "label+percent",
+        hovertemplate: "%{label}<br>$%{value:,.2f}<br>%{percent}<extra></extra>",
+        marker: { colors: colors },
+        sort: false,
+      };
+    }
+    Plotly.react("cat-chart", [trace], {
+      margin: { t: 10, l: 10, r: 10, b: 10 },
+      showlegend: catState.type === "donut",
+      legend: { orientation: "v", x: 1.0, y: 0.5 },
+      ...theme,
+    }, { displayModeBar: false });
+  }
+
+  function bindPillGroup(rootId, stateKey) {
+    const root = document.getElementById(rootId);
+    root.querySelectorAll("button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        catState[stateKey] = btn.dataset.range || btn.dataset.type;
+        root.querySelectorAll("button").forEach(b => {
+          b.classList.remove("bg-white", "dark:bg-gray-800", "shadow", "text-gray-900", "dark:text-gray-100");
+          b.classList.add("text-gray-600", "dark:text-gray-300", "hover:bg-gray-100", "dark:hover:bg-gray-700");
+        });
+        btn.classList.remove("text-gray-600", "dark:text-gray-300", "hover:bg-gray-100", "dark:hover:bg-gray-700");
+        btn.classList.add("bg-white", "dark:bg-gray-800", "shadow", "text-gray-900", "dark:text-gray-100");
+        renderCatChart();
+      });
+    });
+  }
+  bindPillGroup("cat-range-pills", "range");
+  bindPillGroup("cat-type-pills", "type");
+  renderCatChart();
+
+  // Stacked-bar trend: spending mix per month
+  const stackChart = document.getElementById("stack-chart");
+  if (catByMonth.months && catByMonth.months.length) {
+    const stackTraces = catByMonth.categories.map((cat, i) => ({
+      type: "bar",
+      name: cat,
+      x: catByMonth.months,
+      y: catByMonth.series[cat],
+      marker: { color: CAT_PALETTE[i % CAT_PALETTE.length] },
+      hovertemplate: cat + "<br>%{x}: $%{y:,.0f}<extra></extra>",
+    }));
+    Plotly.newPlot(stackChart, stackTraces, {
+      barmode: "stack",
+      margin: { t: 10 },
+      legend: { orientation: "h", y: -0.2 },
+      ...theme,
+      xaxis: { ...(theme.xaxis || {}) },
+      yaxis: { title: "$", ...(theme.yaxis || {}) },
+    }, { displayModeBar: false });
+    stackChart.on("plotly_click", e => {
+      const month = e.points[0].x;
+      if (month) location.href = "/month/" + month;
+    });
+  } else {
+    stackChart.innerHTML = "<p class='text-gray-500 dark:text-gray-400 italic p-4'>Not enough transaction history yet.</p>";
+  }
 
   const trendChart = document.getElementById("trend-chart");
   Plotly.newPlot(trendChart, [
