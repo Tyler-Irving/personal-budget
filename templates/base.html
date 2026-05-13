@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Budget — {% block title %}{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <nav class="bg-white border-b sticky top-0 z-10">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-5 flex-wrap">
+      <a href="/" class="font-bold text-lg">Budget</a>
+      <a href="/" class="text-gray-700 hover:text-blue-600">Dashboard</a>
+      <a href="/transactions" class="text-gray-700 hover:text-blue-600">Transactions</a>
+      <a href="/recurring" class="text-gray-700 hover:text-blue-600">Recurring</a>
+      <a href="/rules" class="text-gray-700 hover:text-blue-600">Rules</a>
+      <a href="/goals" class="text-gray-700 hover:text-blue-600">Goals</a>
+      <a href="/networth" class="text-gray-700 hover:text-blue-600">Net Worth</a>
+      {% if unc_count and unc_count > 0 %}
+        <a href="/transactions?category=Uncategorized" class="ml-auto bg-amber-100 text-amber-800 px-3 py-1 rounded text-sm hover:bg-amber-200">
+          {{ unc_count }} uncategorized
+        </a>
+      {% endif %}
+    </div>
+  </nav>
+  <main class="max-w-7xl mx-auto px-4 py-6">
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="mb-4 space-y-1">
+          {% for msg in messages %}
+            <div class="bg-green-50 border border-green-200 text-green-800 px-3 py-2 rounded text-sm">{{ msg }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

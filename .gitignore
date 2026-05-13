@@ -1,0 +1,27 @@
+# --- Personal financial data (never commit) ---
+Transaction CSVs/
+Transactions.csv
+Categories.csv
+Goals.csv
+Net Worth.csv
+RecurringBills.csv
+Rules.csv
+uncategorized-top.csv
+
+# Legacy Google Sheets exports (outdated, contain user data)
+Dashboard.csv
+Monthly Summary.csv
+
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

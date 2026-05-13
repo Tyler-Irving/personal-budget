@@ -1,0 +1,29 @@
+Category,Type,Monthly Budget
+Salary,Income,0
+Other Income,Income,0
+Rent,Expense,0
+Groceries,Expense,0
+Dining Out,Expense,0
+Utilities,Expense,0
+Internet,Expense,0
+Phone,Expense,0
+Transportation,Expense,0
+Gas,Expense,0
+Healthcare,Expense,0
+Insurance,Expense,0
+Taxes,Expense,0
+Subscriptions,Expense,0
+Entertainment,Expense,0
+Travel,Expense,0
+Shopping,Expense,0
+Personal Care,Expense,0
+Pets,Expense,0
+Education,Expense,0
+Business,Expense,0
+Gifts & Donations,Expense,0
+Fees & ATM,Expense,0
+Uncategorized,Expense,0
+Transfer,Transfer,0
+Emergency Fund,Savings,0
+Retirement,Savings,0
+Investments,Savings,0

@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ yyyymm }}{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-2xl font-bold">{{ yyyymm }}</h1>
+  <div class="flex gap-2 items-center text-sm">
+    {% if prev_month %}<a href="/month/{{ prev_month }}" class="px-3 py-1 bg-white border rounded hover:bg-gray-50">← {{ prev_month }}</a>{% endif %}
+    <select onchange="location.href='/month/' + this.value" class="border rounded px-2 py-1">
+      {% for m in all_months %}<option value="{{ m }}" {% if m == yyyymm %}selected{% endif %}>{{ m }}</option>{% endfor %}
+    </select>
+    {% if next_month %}<a href="/month/{{ next_month }}" class="px-3 py-1 bg-white border rounded hover:bg-gray-50">{{ next_month }} →</a>{% endif %}
+  </div>
+</div>
+
+<div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+  <div class="bg-white p-3 rounded shadow text-center">
+    <div class="text-xs text-gray-600">Income</div>
+    <div class="text-lg font-semibold text-green-700">${{ "{:,.0f}".format(summary.income) }}</div>
+  </div>
+  <div class="bg-white p-3 rounded shadow text-center">
+    <div class="text-xs text-gray-600">Consumption</div>
+    <div class="text-lg font-semibold text-red-700">${{ "{:,.0f}".format(summary.consumption) }}</div>
+  </div>
+  <div class="bg-white p-3 rounded shadow text-center">
+    <div class="text-xs text-gray-600">Savings</div>
+    <div class="text-lg font-semibold text-blue-700">${{ "{:,.0f}".format(summary.savings) }}</div>
+  </div>
+  <div class="bg-white p-3 rounded shadow text-center">
+    <div class="text-xs text-gray-600">Surplus</div>
+    <div class="text-lg font-semibold {% if summary.net < 0 %}text-red-700{% else %}text-gray-800{% endif %}">${{ "{:,.0f}".format(summary.net) }}</div>
+  </div>
+  <div class="bg-white p-3 rounded shadow text-center">
+    <div class="text-xs text-gray-600">Savings Rate</div>
+    <div class="text-lg font-semibold">{{ "{:.0%}".format(summary.savings_rate) }}</div>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+  <div class="bg-white p-4 rounded shadow">
+    <h2 class="font-semibold mb-2 text-gray-700">Spending by Category</h2>
+    <div id="cat-chart" style="height:350px"></div>
+  </div>
+  <div class="bg-white p-4 rounded shadow">
+    <h2 class="font-semibold mb-2 text-gray-700">Top Merchants</h2>
+    <table class="w-full text-sm">
+      <tbody>
+        {% for desc, amt in top_merch.items() %}
+        <tr class="border-b last:border-0">
+          <td class="py-1 pr-2 truncate" style="max-width: 0">{{ desc }}</td>
+          <td class="py-1 text-right font-medium text-red-700 whitespace-nowrap">${{ "{:,.2f}".format(amt) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="bg-white rounded shadow overflow-hidden">
+  <h2 class="font-semibold p-3 text-gray-700 border-b">All transactions ({{ rows | length }})</h2>
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 text-left text-xs uppercase text-gray-600">
+      <tr>
+        <th class="px-3 py-2">Date</th>
+        <th class="px-3 py-2">Description</th>
+        <th class="px-3 py-2 text-right">Amount</th>
+        <th class="px-3 py-2">Account</th>
+        <th class="px-3 py-2">Category</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="border-t hover:bg-gray-50 {% if r.Category == 'Uncategorized' %}bg-amber-50{% endif %}">
+        <td class="px-3 py-1 whitespace-nowrap">{{ r.Date.strftime("%Y-%m-%d") }}</td>
+        <td class="px-3 py-1">{{ r.Description }}</td>
+        <td class="px-3 py-1 text-right whitespace-nowrap {% if r.Amount < 0 %}text-red-700{% else %}text-green-700{% endif %}">${{ "{:,.2f}".format(r.Amount) }}</td>
+        <td class="px-3 py-1 text-gray-600 whitespace-nowrap">{{ r.Account }}</td>
+        <td class="px-3 py-1">
+          <form method="post" action="/categorize" class="inline">
+            <input type="hidden" name="idx" value="{{ r._idx }}">
+            <select name="category" onchange="this.form.submit()" class="border rounded px-1 py-0.5 text-xs bg-white">
+              {% for c in categories %}<option value="{{ c }}" {% if c == r.Category %}selected{% endif %}>{{ c }}</option>{% endfor %}
+            </select>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+  const catData = {{ cat_break | tojson }};
+  Plotly.newPlot("cat-chart", [{
+    type: "bar", orientation: "h",
+    x: Object.values(catData).reverse(),
+    y: Object.keys(catData).reverse(),
+    marker: { color: "#ef4444" },
+    text: Object.values(catData).reverse().map(v => "$" + v.toLocaleString(undefined, {maximumFractionDigits:0})),
+    textposition: "outside",
+  }], {
+    margin: { l: 130, t: 10, r: 70, b: 30 }
+  }, { displayModeBar: false });
+</script>
+{% endblock %}

@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Transactions{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-4">Transactions</h1>
+
+<form method="get" class="bg-white p-4 rounded shadow mb-4 flex flex-wrap gap-3 items-end">
+  <div>
+    <label class="block text-xs text-gray-600 mb-1">Category</label>
+    <select name="category" class="border rounded px-2 py-1">
+      <option value="">All</option>
+      {% for c in categories %}
+        <option value="{{ c }}" {% if c == cat_filter %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-gray-600 mb-1">Account</label>
+    <select name="account" class="border rounded px-2 py-1">
+      <option value="">All</option>
+      {% for a in accounts %}
+        <option value="{{ a }}" {% if a == account_filter %}selected{% endif %}>{{ a }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="flex-1 min-w-64">
+    <label class="block text-xs text-gray-600 mb-1">Search description</label>
+    <input type="text" name="search" value="{{ search }}" class="w-full border rounded px-2 py-1" placeholder="merchant name...">
+  </div>
+  <button class="bg-blue-600 text-white px-4 py-1.5 rounded hover:bg-blue-700">Apply</button>
+  <a href="/transactions" class="text-gray-600 hover:text-gray-800 text-sm py-1.5">Clear</a>
+</form>
+
+<form method="post" action="/categorize" class="bg-amber-50 border border-amber-200 p-4 rounded shadow mb-4">
+  <h2 class="font-semibold text-amber-900 mb-2">Bulk categorize Uncategorized by pattern</h2>
+  <div class="flex flex-wrap gap-3 items-end">
+    <div class="flex-1 min-w-64">
+      <label class="block text-xs text-gray-700 mb-1">Description contains (case-insensitive)</label>
+      <input type="text" name="pattern" required class="w-full border rounded px-2 py-1" placeholder="e.g. STARBUCKS">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-700 mb-1">Set category</label>
+      <select name="category" required class="border rounded px-2 py-1">
+        {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+    </div>
+    <label class="flex items-center gap-1.5 text-sm text-gray-700 mb-1.5">
+      <input type="checkbox" name="save_rule" checked> Save as rule
+    </label>
+    <button class="bg-amber-600 text-white px-4 py-1.5 rounded hover:bg-amber-700">Apply to all matching Uncategorized</button>
+  </div>
+</form>
+
+<form method="post" action="/categorize" id="bulk-form" class="bg-blue-50 border border-blue-200 p-3 rounded shadow mb-2 flex flex-wrap gap-3 items-center text-sm">
+  <span class="text-blue-900 font-medium">Bulk by selection:</span>
+  <span class="text-blue-800"><span id="sel-count">0</span> selected</span>
+  <select name="category" required class="border rounded px-2 py-1 text-sm bg-white">
+    <option value="">Choose category...</option>
+    {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+  </select>
+  <button class="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Apply to selected</button>
+  <button type="button" onclick="clearSel()" class="text-blue-700 hover:underline">Clear</button>
+</form>
+
+<div class="text-sm text-gray-600 mb-2">
+  {{ total }} matching {% if total == 1 %}transaction{% else %}transactions{% endif %}, page {{ page }} of {{ total_pages }}
+</div>
+
+<div class="bg-white rounded shadow overflow-hidden">
+<table class="w-full text-sm">
+  <thead class="bg-gray-100 text-left text-xs uppercase text-gray-600">
+    <tr>
+      <th class="px-2 py-2"><input type="checkbox" onchange="toggleAll(this)" title="Select all visible"></th>
+      <th class="px-3 py-2">Date</th>
+      <th class="px-3 py-2">Description</th>
+      <th class="px-3 py-2 text-right">Amount</th>
+      <th class="px-3 py-2">Account</th>
+      <th class="px-3 py-2">Category</th>
+      <th class="px-3 py-2">Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr class="border-t hover:bg-gray-50 {% if r.Category == 'Uncategorized' %}bg-amber-50{% endif %}">
+      <td class="px-2 py-1"><input type="checkbox" name="indices" value="{{ r._idx }}" form="bulk-form" class="row-check" onchange="updateCount()"></td>
+      <td class="px-3 py-1 whitespace-nowrap text-gray-700">{{ r.Date.strftime("%Y-%m-%d") }}</td>
+      <td class="px-3 py-1">{{ r.Description }}</td>
+      <td class="px-3 py-1 text-right whitespace-nowrap {% if r.Amount < 0 %}text-red-700{% else %}text-green-700{% endif %}">${{ "{:,.2f}".format(r.Amount) }}</td>
+      <td class="px-3 py-1 text-gray-600 whitespace-nowrap">{{ r.Account }}</td>
+      <td class="px-3 py-1">
+        <form method="post" action="/categorize" class="inline">
+          <input type="hidden" name="idx" value="{{ r._idx }}">
+          <select name="category" onchange="this.form.submit()" class="border rounded px-1 py-0.5 text-xs bg-white">
+            {% for c in categories %}
+              <option value="{{ c }}" {% if c == r.Category %}selected{% endif %}>{{ c }}</option>
+            {% endfor %}
+          </select>
+        </form>
+      </td>
+      <td class="px-3 py-1 text-gray-500 text-xs">{{ r.Notes }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<script>
+  function updateCount() {
+    const n = document.querySelectorAll(".row-check:checked").length;
+    document.getElementById("sel-count").textContent = n;
+  }
+  function toggleAll(master) {
+    document.querySelectorAll(".row-check").forEach(cb => cb.checked = master.checked);
+    updateCount();
+  }
+  function clearSel() {
+    document.querySelectorAll(".row-check").forEach(cb => cb.checked = false);
+    updateCount();
+  }
+</script>
+
+<div class="mt-4 flex gap-2 text-sm">
+  {% set base_qs = [] %}
+  {% if cat_filter %}{% set _ = base_qs.append("category=" + cat_filter) %}{% endif %}
+  {% if account_filter %}{% set _ = base_qs.append("account=" + account_filter) %}{% endif %}
+  {% if search %}{% set _ = base_qs.append("search=" + search) %}{% endif %}
+  {% set qs = base_qs | join("&") %}
+  {% if page > 1 %}
+    <a href="?{{ qs }}{% if qs %}&{% endif %}page={{ page - 1 }}" class="px-3 py-1 bg-white border rounded hover:bg-gray-50">← Prev</a>
+  {% endif %}
+  {% if page < total_pages %}
+    <a href="?{{ qs }}{% if qs %}&{% endif %}page={{ page + 1 }}" class="px-3 py-1 bg-white border rounded hover:bg-gray-50">Next →</a>
+  {% endif %}
+</div>
+{% endblock %}
