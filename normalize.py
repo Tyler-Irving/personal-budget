@@ -62,7 +62,7 @@ CATEGORY_MAP = {
     "Housing/Supplies": "Shopping",
     "Housing/Furnishings": "Shopping",
     "Merchandise": "Shopping",
-    "Housing": "Rent",
+    "Housing": "Bills",
     "Medical": "Healthcare",
     "Healthcare - HSA Spending Account": "Healthcare",
     "Healthcare - HSA Spending Account/Copays": "Healthcare",
@@ -71,7 +71,7 @@ CATEGORY_MAP = {
     "Insurance": "Insurance",
     "Entertainment": "Entertainment",
     "Utilities/Phone": "Phone",
-    "Publications": "Subscriptions",
+    "Publications": "Bills",
     "Pets": "Pets",
     "Pets/Other": "Pets",
     "Personal Care": "Personal Care",
@@ -107,7 +107,7 @@ MERCHANT_CATEGORY = {
     "nex fuel": "Gas",
     "desoto family wellness": "Healthcare",
     "baptist memorial hospital-desoto": "Healthcare",
-    "apple": "Subscriptions",
+    "apple": "Bills",
     "steam games": "Entertainment",
     "amazon": "Shopping",
     "walmart": "Shopping",
@@ -119,7 +119,7 @@ MERCHANT_CATEGORY = {
     "payment": "Transfer",
     "nexcom hq": "Shopping",
     "20350 crunch austin peay": "Personal Care",  # gym
-    "hernando self storage": "Rent",  # storage rental
+    "hernando self storage": "Bills",  # storage rental
     "sport clips": "Personal Care",
     "booksy": "Personal Care",
     "hollywood feed": "Pets",
@@ -135,8 +135,8 @@ MERCHANT_CATEGORY = {
     "dixie memorial": "Pets",
     "delta airlines": "Travel",
     "airbnb": "Travel",
-    "coinbase inc.": "Investments",
-    "whoop": "Subscriptions",
+    "coinbase inc.": "Investment Spend",
+    "whoop": "Bills",
     "fedexforum": "Entertainment",
     "home depot": "Shopping",
     "elfo grisanti's": "Dining Out",
@@ -166,8 +166,8 @@ KEYWORD_CATEGORY = [
     ("TACO", "Dining Out"), ("BURGER", "Dining Out"), ("DELI", "Dining Out"),
     ("STARBUCKS", "Dining Out"), ("CHIPOTLE", "Dining Out"),
     ("PHONE", "Phone"), ("WIRELESS", "Phone"), ("VERIZON", "Phone"), ("T-MOBILE", "Phone"),
-    ("NETFLIX", "Subscriptions"), ("SPOTIFY", "Subscriptions"), ("HULU", "Subscriptions"),
-    ("DISNEY+", "Subscriptions"), ("APPLE.COM/BILL", "Subscriptions"),
+    ("NETFLIX", "Bills"), ("SPOTIFY", "Bills"), ("HULU", "Bills"),
+    ("DISNEY+", "Bills"), ("APPLE.COM/BILL", "Bills"),
     ("STEAM", "Entertainment"), ("XBOX", "Entertainment"), ("PLAYSTATION", "Entertainment"),
     ("TARGET", "Shopping"), ("COSTCO", "Shopping"), ("BEST BUY", "Shopping"),
     ("UBER", "Transportation"), ("LYFT", "Transportation"),
@@ -177,15 +177,15 @@ KEYWORD_CATEGORY = [
     ("CASH APP", "Transfer"), ("INTERBANK", "Transfer"), ("VENMO", "Transfer"), ("ZELLE", "Transfer"),
     ("UNIV OF MISSISSIPPI", "Education"), ("UNIVERSITY", "Education"),
     ("MMS-BAPTIST", "Healthcare"), ("BAPTIST DE", "Healthcare"),
-    ("COINBASE", "Investments"),
+    ("COINBASE", "Investment Spend"),
     ("IRS USATAXPYMT", "Taxes"), ("USATAXPYMT", "Taxes"),
     ("AIRBNB", "Travel"), ("DELTA AIR", "Travel"), ("AIRLINES", "Travel"),
     ("HOTEL", "Travel"), ("MARRIOTT", "Travel"), ("HILTON", "Travel"),
     ("CALIBER COLLISI", "Transportation"), ("TOYOTA", "Transportation"),
     ("DIXIE MEMORIAL", "Pets"),
-    ("WHOOP", "Subscriptions"),
+    ("WHOOP", "Bills"),
     ("DRAFTKINGS", "Entertainment"), ("FEDEXFORUM", "Entertainment"),
-    ("KRAKEN", "Investments"),
+    ("KRAKEN", "Investment Spend"),
     ("STATE FARM", "Insurance"),
     ("HOME DEPOT", "Shopping"), ("WM SUPERCE", "Shopping"), ("RACK ROOM", "Shopping"),
     ("MS.GOV", "Taxes"),
@@ -197,7 +197,7 @@ KEYWORD_CATEGORY = [
     ("MANY ISLANDS CAMP", "Travel"),
     ("CRAZY HORSE RECREATIONAL", "Entertainment"),
     ("HINTON FLORAL", "Gifts & Donations"),
-    ("HERNANDO SELF STORAGE", "Rent"),
+    ("HERNANDO SELF STORAGE", "Bills"),
     ("MARSHALLS", "Shopping"), ("H&M", "Shopping"), ("NIKE", "Shopping"),
     ("O'REILLY", "Transportation"),
     ("CARNIVAL", "Travel"),
@@ -362,24 +362,35 @@ def merge_with_existing(new_rows: list[dict]) -> tuple[list[dict], int]:
     return out, preserved
 
 
-def main():
+def run_import() -> dict:
+    """Programmatic entry point. Returns a structured result for the UI."""
     global USER_RULES
     USER_RULES = load_user_rules()
-    print(f"Loaded {len(USER_RULES)} user rules from Rules.csv")
-    print()
 
-    all_rows = []
+    all_rows: list[dict] = []
+    skipped: list[dict] = []
+    processed: list[dict] = []
     for csv_path in sorted(INPUT_DIR.glob("*.csv")):
-        rows = detect_and_normalize(csv_path)
-        print(f"  {len(rows):5d} rows from {csv_path.name}")
+        try:
+            rows = detect_and_normalize(csv_path)
+        except Exception as e:
+            skipped.append({"file": csv_path.name, "error": f"{type(e).__name__}: {e}"})
+            continue
+        processed.append({"file": csv_path.name, "rows": len(rows)})
         all_rows.extend(rows)
 
-    all_rows.sort(key=lambda r: r["Date"])
+    if not all_rows:
+        return {
+            "ok": False,
+            "rows_written": 0,
+            "preserved": 0,
+            "processed": processed,
+            "skipped": skipped,
+            "message": "No rows ingested — Transactions.csv left unchanged.",
+        }
 
-    # Preserve any manual categorization edits already in Transactions.csv
+    all_rows.sort(key=lambda r: r["Date"])
     all_rows, preserved = merge_with_existing(all_rows)
-    if preserved:
-        print(f"\nPreserved {preserved} existing categorizations from Transactions.csv")
 
     with OUTPUT_PATH.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["Date", "Description", "Amount", "Account", "Category", "Notes"])
@@ -387,17 +398,51 @@ def main():
         w.writerows(all_rows)
 
     from collections import Counter
+    return {
+        "ok": True,
+        "rows_written": len(all_rows),
+        "preserved": preserved,
+        "processed": processed,
+        "skipped": skipped,
+        "date_range": [all_rows[0]["Date"], all_rows[-1]["Date"]],
+        "rules_loaded": len(USER_RULES),
+        "by_account": Counter(r["Account"] for r in all_rows).most_common(),
+        "by_category": Counter(r["Category"] for r in all_rows).most_common(),
+    }
+
+
+def main():
+    result = run_import()
+    print(f"Loaded {result.get('rules_loaded', len(USER_RULES))} user rules from Rules.csv")
     print()
-    print(f"Wrote {len(all_rows)} rows to {OUTPUT_PATH.name}")
-    print(f"Date range: {all_rows[0]['Date']} to {all_rows[-1]['Date']}")
+    for p in result["processed"]:
+        print(f"  {p['rows']:5d} rows from {p['file']}")
+    for s in result["skipped"]:
+        print(f"  SKIP  {s['file']}  ({s['error']})")
+
+    if not result["ok"]:
+        print(f"\n{result['message']}")
+        return
+
+    if result["preserved"]:
+        print(f"\nPreserved {result['preserved']} existing categorizations from Transactions.csv")
+    print()
+    print(f"Wrote {result['rows_written']} rows to {OUTPUT_PATH.name}")
+    print(f"Date range: {result['date_range'][0]} to {result['date_range'][1]}")
     print()
     print("By Account:")
-    for a, n in Counter(r["Account"] for r in all_rows).most_common():
+    for a, n in result["by_account"]:
         print(f"  {n:5d}  {a}")
     print()
     print("By Category:")
-    for c, n in Counter(r["Category"] for r in all_rows).most_common():
+    for c, n in result["by_category"]:
         print(f"  {n:5d}  {c}")
+
+    if result["skipped"]:
+        print()
+        print(f"Skipped {len(result['skipped'])} file(s):")
+        for s in result["skipped"]:
+            print(f"  {s['file']}: {s['error']}")
 
 
 if __name__ == "__main__":
