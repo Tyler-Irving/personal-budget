@@ -16,9 +16,12 @@ from datetime import datetime
 from pathlib import Path
 
 BASE = Path(__file__).parent
+DATA = BASE / "data"
 INPUT_DIR = BASE / "Transaction CSVs"
-RULES_PATH = BASE / "Rules.csv"
-OUTPUT_PATH = BASE / "Transactions.csv"
+RULES_PATH = DATA / "Rules.csv"
+OUTPUT_PATH = DATA / "Transactions.csv"
+
+DATA.mkdir(parents=True, exist_ok=True)
 
 
 def load_user_rules() -> list[tuple[str, str]]:

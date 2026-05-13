@@ -8,10 +8,31 @@ Then open http://localhost:5000 in your browser.
 from pathlib import Path
 from datetime import date
 import csv
+import shutil
 from flask import Flask, render_template, request, redirect, url_for, flash
 import pandas as pd
 
 BASE = Path(__file__).parent
+DATA = BASE / "data"
+EXAMPLES = BASE / "examples"
+
+
+def bootstrap_data() -> None:
+    """Seed data/ from examples/ on first run.
+
+    Copies any examples/*.csv that doesn't already exist in data/. Never
+    overwrites existing user data.
+    """
+    DATA.mkdir(parents=True, exist_ok=True)
+    if EXAMPLES.exists():
+        for src in EXAMPLES.glob("*.csv"):
+            dst = DATA / src.name
+            if not dst.exists():
+                shutil.copy(src, dst)
+
+
+bootstrap_data()
+
 app = Flask(__name__)
 app.secret_key = "budget-local-dev"
 
@@ -20,7 +41,7 @@ SAVINGS_CATS = ["Emergency Fund", "Retirement", "Investments"]
 
 
 def load_transactions() -> pd.DataFrame:
-    df = pd.read_csv(BASE / "Transactions.csv")
+    df = pd.read_csv(DATA / "Transactions.csv")
     df["Date"] = pd.to_datetime(df["Date"])
     df["Amount"] = df["Amount"].astype(float)
     df["Notes"] = df["Notes"].fillna("")
@@ -30,15 +51,15 @@ def load_transactions() -> pd.DataFrame:
 def save_transactions(df: pd.DataFrame) -> None:
     out = df.copy()
     out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
-    out.to_csv(BASE / "Transactions.csv", index=False, float_format="%.2f")
+    out.to_csv(DATA / "Transactions.csv", index=False, float_format="%.2f")
 
 
 def load_categories() -> pd.DataFrame:
-    return pd.read_csv(BASE / "Categories.csv")
+    return pd.read_csv(DATA / "Categories.csv")
 
 
 def load_goals() -> pd.DataFrame:
-    df = pd.read_csv(BASE / "Goals.csv")
+    df = pd.read_csv(DATA / "Goals.csv")
     df["Target Amount"] = df["Target Amount"].astype(float)
     df["Current Balance"] = df["Current Balance"].astype(float)
     df["Monthly Contribution"] = df["Monthly Contribution"].astype(float)
@@ -56,7 +77,7 @@ def load_goals() -> pd.DataFrame:
 
 
 def load_recurring_bills() -> list[dict]:
-    path = BASE / "RecurringBills.csv"
+    path = DATA / "RecurringBills.csv"
     if not path.exists():
         return []
     with path.open() as f:
@@ -70,7 +91,7 @@ def load_recurring_bills() -> list[dict]:
 
 
 def save_recurring_bills(rows: list[dict]) -> None:
-    path = BASE / "RecurringBills.csv"
+    path = DATA / "RecurringBills.csv"
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["Name", "Amount", "Category", "Day", "Notes"])
         w.writeheader()
@@ -135,7 +156,7 @@ def detect_recurring_candidates(df: pd.DataFrame, months_back: int = 3) -> list[
 
 
 def load_net_worth() -> pd.DataFrame:
-    df = pd.read_csv(BASE / "Net Worth.csv")
+    df = pd.read_csv(DATA / "Net Worth.csv")
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     for col in ["Checking", "Savings", "Investments", "Other Assets", "Credit Cards", "Loans"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
@@ -146,7 +167,7 @@ def load_net_worth() -> pd.DataFrame:
 
 
 def load_rules() -> list[dict]:
-    path = BASE / "Rules.csv"
+    path = DATA / "Rules.csv"
     if not path.exists():
         return []
     with path.open() as f:
@@ -156,7 +177,7 @@ def load_rules() -> list[dict]:
 
 
 def save_rules(rules: list[dict]) -> None:
-    path = BASE / "Rules.csv"
+    path = DATA / "Rules.csv"
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["Keyword", "Category"])
         w.writeheader()
@@ -164,7 +185,7 @@ def save_rules(rules: list[dict]) -> None:
 
 
 def save_goals(rows: list[dict]) -> None:
-    path = BASE / "Goals.csv"
+    path = DATA / "Goals.csv"
     fieldnames = ["Goal", "Target Amount", "Current Balance", "Target Date",
                   "Monthly Contribution", "Progress %", "Months Remaining at Current Pace"]
     with path.open("w", newline="") as f:
@@ -188,7 +209,7 @@ def save_goals(rows: list[dict]) -> None:
 
 
 def save_net_worth(rows: list[dict]) -> None:
-    path = BASE / "Net Worth.csv"
+    path = DATA / "Net Worth.csv"
     fieldnames = ["Date", "Checking", "Savings", "Investments", "Other Assets",
                   "Credit Cards", "Loans", "Total Assets", "Total Liabilities", "Net Worth"]
     with path.open("w", newline="") as f:

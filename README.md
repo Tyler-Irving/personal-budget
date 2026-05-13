@@ -24,19 +24,20 @@ cd personal-budget
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-# Seed your CSV files from the templates (real CSVs are gitignored)
-for f in *.example.csv; do cp "$f" "${f/.example/}"; done
-
 # Drop your bank exports here
 mkdir -p "Transaction CSVs"
 # ...copy your statement CSVs into Transaction CSVs/
 
-# Normalize raw bank files into Transactions.csv
+# Normalize raw bank files into data/Transactions.csv
 .venv/bin/python normalize.py
 
-# Start the web app
+# Start the web app — first run auto-seeds data/ from examples/
 .venv/bin/python app.py
 ```
+
+> The app auto-copies `examples/*.csv` into `data/` on first run (only files
+> that don't already exist — your edits are safe). To start fresh, delete a
+> file from `data/` and restart the server.
 
 Then open **http://localhost:5000** in your browser. `Ctrl+C` in the terminal to stop.
 
@@ -75,14 +76,20 @@ app.py                       Flask server with all routes
 normalize.py                 CSV ingestion + categorization heuristics
 requirements.txt             flask, pandas
 templates/                   Jinja2 templates (Tailwind via CDN, Plotly via CDN)
-*.example.csv                Starter templates — copy to drop the .example suffix
+examples/                    Starter CSVs (committed) — auto-copied to data/ on first run
+  Categories.csv
+  Goals.csv
+  Net Worth.csv
+  RecurringBills.csv
+  Rules.csv
+data/                        Your real data (gitignored)
+  Transactions.csv           Normalized ledger
+  Categories.csv             Category list with monthly budgets
+  Goals.csv                  Savings goals
+  Net Worth.csv              Monthly net-worth snapshots
+  RecurringBills.csv         Fixed monthly bills
+  Rules.csv                  Custom keyword→category rules
 Transaction CSVs/            Raw bank exports go here (gitignored)
-Transactions.csv             Normalized ledger (gitignored)
-Categories.csv               Category list with monthly budgets (gitignored)
-Goals.csv                    Savings goals (gitignored)
-Net Worth.csv                Monthly net-worth snapshots (gitignored)
-RecurringBills.csv           Fixed monthly bills (gitignored)
-Rules.csv                    Custom keyword→category rules (gitignored)
 ```
 
 ## Privacy
