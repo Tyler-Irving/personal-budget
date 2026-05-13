@@ -48,7 +48,7 @@
       <a href="/" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Dashboard</a>
       <a href="/forecast" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Forecast</a>
       <a href="/transactions" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Transactions</a>
-      <a href="/recurring" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Recurring</a>
+      <a href="/recurring" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Bills</a>
       <a href="/rules" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Rules</a>
       <a href="/goals" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Goals</a>
       <a href="/networth" class="text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">Net Worth</a>
@@ -58,6 +58,9 @@
             {{ unc_count }} uncategorized
           </a>
         {% endif %}
+        <button id="reimport-btn" onclick="reimportData()" class="border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-3 py-1 text-xs disabled:opacity-50 disabled:cursor-not-allowed" title="Re-run normalize.py against Transaction CSVs/">
+          Reimport
+        </button>
         <button onclick="toggleTheme()" class="border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded px-3 py-1 text-xs" title="Toggle theme">
           <span class="dark:hidden">Dark</span><span class="hidden dark:inline">Light</span>
         </button>
@@ -76,5 +79,63 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
+
+  <div id="toast-stack" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm"></div>
+  <script>
+    // Toast: kinds = info | success | error. Returns the element so callers can dismiss/update it.
+    function showToast(message, kind = 'info', { sticky = false, id = null } = {}) {
+      const stack = document.getElementById('toast-stack');
+      const existing = id ? document.getElementById(id) : null;
+      const el = existing || document.createElement('div');
+      if (id) el.id = id;
+      const palette = {
+        info:    'bg-blue-50 dark:bg-blue-900/40 border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200',
+        success: 'bg-green-50 dark:bg-green-900/40 border-green-200 dark:border-green-800 text-green-900 dark:text-green-200',
+        error:   'bg-red-50 dark:bg-red-900/40 border-red-200 dark:border-red-800 text-red-900 dark:text-red-200',
+      }[kind] || '';
+      el.className = `${palette} border px-4 py-3 rounded shadow-lg text-sm flex items-start gap-3 transition-opacity duration-200`;
+      el.innerHTML = `<div class="flex-1 whitespace-pre-line">${message}</div>
+        <button class="opacity-60 hover:opacity-100 text-lg leading-none" aria-label="Dismiss">&times;</button>`;
+      el.querySelector('button').onclick = () => el.remove();
+      if (!existing) stack.appendChild(el);
+      if (!sticky) {
+        setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 200); }, 5000);
+      }
+      return el;
+    }
+
+    async function reimportData() {
+      const btn = document.getElementById('reimport-btn');
+      btn.disabled = true;
+      const startToast = showToast('Reimporting from Transaction CSVs/…', 'info', { sticky: true, id: 'toast-reimport' });
+      try {
+        const res = await fetch('/data/reimport', { method: 'POST' });
+        const data = await res.json();
+        startToast.remove();
+        if (res.ok && data.ok) {
+          const lines = [
+            `Imported ${data.rows_written} rows (${data.date_range[0]} → ${data.date_range[1]}).`,
+            `Preserved ${data.preserved} existing categorizations.`,
+          ];
+          if (data.skipped.length) {
+            lines.push(`Skipped ${data.skipped.length} file(s): ` + data.skipped.map(s => s.file).join(', '));
+            showToast(lines.join('\n'), 'info');
+          } else {
+            showToast(lines.join('\n'), 'success');
+          }
+          setTimeout(() => location.reload(), 1200);
+        } else {
+          const detail = data.error || data.message || `HTTP ${res.status}`;
+          const files = (data.skipped || []).map(s => `  • ${s.file}: ${s.error}`).join('\n');
+          showToast(`Reimport failed.\n${detail}` + (files ? `\n${files}` : ''), 'error', { sticky: true });
+        }
+      } catch (e) {
+        startToast.remove();
+        showToast(`Reimport failed: ${e.message || e}`, 'error', { sticky: true });
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
 </body>
 </html>

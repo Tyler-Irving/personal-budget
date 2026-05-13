@@ -17,8 +17,10 @@ import os
 import shutil
 import urllib.error
 import urllib.request
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 import pandas as pd
+
+import normalize
 
 BASE = Path(__file__).parent
 DATA = BASE / "data"
@@ -45,7 +47,7 @@ app = Flask(__name__)
 app.secret_key = "budget-local-dev"
 
 INCOME_CATS = ["Salary", "Other Income"]
-SAVINGS_CATS = ["Emergency Fund", "Retirement", "Investments"]
+SAVINGS_CATS = ["Emergency Fund", "Retirement"]
 
 
 def load_transactions() -> pd.DataFrame:
@@ -89,6 +91,16 @@ def load_goals() -> pd.DataFrame:
     return df
 
 
+VALID_FREQUENCIES = {"monthly", "semi-monthly", "weekly", "biweekly"}
+WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+WEEKDAY_INDEX = {w.lower(): i for i, w in enumerate(WEEKDAYS)}
+
+
+def _normalize_frequency(raw: str | None) -> str:
+    f = (raw or "").strip().lower()
+    return f if f in VALID_FREQUENCIES else "monthly"
+
+
 def load_recurring_bills() -> list[dict]:
     path = DATA / "RecurringBills.csv"
     if not path.exists():
@@ -97,6 +109,7 @@ def load_recurring_bills() -> list[dict]:
         return [
             {"Name": r["Name"], "Amount": float(r["Amount"] or 0),
              "Category": r.get("Category", ""), "Day": r.get("Day", ""),
+             "Frequency": _normalize_frequency(r.get("Frequency")),
              "Notes": r.get("Notes", "")}
             for r in csv.DictReader(f)
             if r.get("Name")
@@ -106,29 +119,199 @@ def load_recurring_bills() -> list[dict]:
 def save_recurring_bills(rows: list[dict]) -> None:
     path = DATA / "RecurringBills.csv"
     with path.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["Name", "Amount", "Category", "Day", "Notes"])
+        w = csv.DictWriter(f, fieldnames=["Name", "Amount", "Category", "Frequency", "Day", "Notes"])
         w.writeheader()
         for r in rows:
             w.writerow({
                 "Name": r["Name"],
                 "Amount": f"{float(r.get('Amount') or 0):.2f}",
                 "Category": r.get("Category", ""),
+                "Frequency": _normalize_frequency(r.get("Frequency")),
                 "Day": r.get("Day", ""),
                 "Notes": r.get("Notes", ""),
             })
 
 
-def detect_recurring_candidates(df: pd.DataFrame, months_back: int = 3) -> list[dict]:
-    """Find merchants that appear in multiple recent months with similar amounts.
+def is_bill_scheduled(b: dict) -> bool:
+    """A bill is 'scheduled' (i.e. forecastable) if its Day field is valid for its Frequency."""
+    freq = _normalize_frequency(b.get("Frequency"))
+    day = str(b.get("Day", "")).strip()
+    if not day:
+        return False
+    if freq == "monthly":
+        return day.isdigit() and 1 <= int(day) <= 31
+    if freq == "semi-monthly":
+        parts = [p.strip() for p in day.split(",") if p.strip()]
+        return len(parts) >= 1 and all(p.isdigit() and 1 <= int(p) <= 31 for p in parts)
+    if freq == "weekly":
+        return day.lower() in WEEKDAY_INDEX
+    if freq == "biweekly":
+        try:
+            date.fromisoformat(day)
+            return True
+        except ValueError:
+            return False
+    return False
 
-    Excludes income, transfers, savings, and very small charges. Suitable for
-    pre-populating the recurring bills list.
+
+def monthly_equivalent(b: dict) -> float:
+    """Per-month cost for a recurring bill, regardless of cadence."""
+    amount = float(b.get("Amount", 0) or 0)
+    if amount <= 0 or not is_bill_scheduled(b):
+        return amount
+    freq = _normalize_frequency(b.get("Frequency"))
+    if freq == "monthly":
+        return amount
+    if freq == "semi-monthly":
+        day = str(b.get("Day", "")).strip()
+        n = len([p for p in day.split(",") if p.strip()])
+        return amount * n
+    if freq == "weekly":
+        return amount * (52 / 12)
+    if freq == "biweekly":
+        return amount * (26 / 12)
+    return amount
+
+
+def bill_occurrences_in_range(b: dict, start: "date", end: "date") -> list["date"]:
+    """Enumerate the dates this bill will fire on, inclusive of [start, end]."""
+    if not is_bill_scheduled(b) or start > end:
+        return []
+    freq = _normalize_frequency(b.get("Frequency"))
+    day = str(b.get("Day", "")).strip()
+    out: list[date] = []
+    if freq == "monthly":
+        dom = int(day)
+        y, m = start.year, start.month
+        while True:
+            last = calendar.monthrange(y, m)[1]
+            d = date(y, m, min(dom, last))
+            if d > end:
+                break
+            if d >= start:
+                out.append(d)
+            m += 1
+            if m > 12:
+                m, y = 1, y + 1
+        return out
+    if freq == "semi-monthly":
+        days = sorted({int(p.strip()) for p in day.split(",") if p.strip()})
+        y, m = start.year, start.month
+        while True:
+            last = calendar.monthrange(y, m)[1]
+            month_done = True
+            for dom in days:
+                d = date(y, m, min(dom, last))
+                if d > end:
+                    continue
+                month_done = False
+                if d >= start:
+                    out.append(d)
+            # Stop once an entire month is beyond the horizon
+            if date(y, m, 1) > end and month_done:
+                break
+            m += 1
+            if m > 12:
+                m, y = 1, y + 1
+            if date(y, m, 1) > end:
+                break
+        return sorted(out)
+    if freq == "weekly":
+        wd = WEEKDAY_INDEX[day.lower()]
+        d = start + timedelta(days=(wd - start.weekday()) % 7)
+        while d <= end:
+            out.append(d)
+            d += timedelta(days=7)
+        return out
+    if freq == "biweekly":
+        anchor = date.fromisoformat(day)
+        delta = (start - anchor).days
+        # Step forward to the first occurrence >= start
+        if delta <= 0:
+            d = anchor
+        else:
+            d = anchor + timedelta(days=((delta + 13) // 14) * 14)
+        while d <= end:
+            if d >= start:
+                out.append(d)
+            d += timedelta(days=14)
+        return out
+    return []
+
+
+def detect_cadence(df: pd.DataFrame, name: str, fallback_day: int,
+                   lookback_days: int = 120) -> tuple[str, str, int]:
+    """Infer (frequency, day_field, n_matches) for a merchant from its transaction history.
+
+    Looks at outflows in the last `lookback_days` whose Description contains `name`.
+    Falls back to ('monthly', str(fallback_day)) if there's not enough signal.
+    """
+    today = pd.Timestamp(date.today())
+    cutoff = today - pd.Timedelta(days=lookback_days)
+    matches = df[
+        (df["Date"] >= cutoff)
+        & (df["Amount"] < 0)
+        & df["Description"].str.contains(name, case=False, na=False, regex=False)
+    ].sort_values("Date")
+
+    if len(matches) < 3:
+        return "monthly", str(fallback_day), len(matches)
+
+    dates = [d.date() for d in matches["Date"]]
+    deltas = [(dates[i] - dates[i - 1]).days for i in range(1, len(dates))]
+    deltas_sorted = sorted(deltas)
+    median = deltas_sorted[len(deltas_sorted) // 2]
+
+    if 5 <= median <= 9:
+        weekdays = [d.weekday() for d in dates]
+        mode_wd = max(set(weekdays), key=weekdays.count)
+        return "weekly", WEEKDAYS[mode_wd], len(matches)
+
+    if 12 <= median <= 16:
+        anchor = dates[-1]
+        return "biweekly", anchor.isoformat(), len(matches)
+
+    if median >= 25:
+        doms = [d.day for d in dates]
+        from collections import Counter
+        counts = Counter(doms)
+        common = [d for d, c in counts.most_common() if c >= 2]
+        if len(common) >= 2:
+            top_two = sorted(common[:2])
+            return "semi-monthly", ",".join(str(d) for d in top_two), len(matches)
+        mode_dom = counts.most_common(1)[0][0]
+        return "monthly", str(mode_dom), len(matches)
+
+    return "monthly", str(fallback_day), len(matches)
+
+
+def describe_bill_cadence(b: dict) -> str:
+    """Short human-readable description of a bill's cadence, for flashes."""
+    if not is_bill_scheduled(b):
+        return "unscheduled"
+    freq = _normalize_frequency(b.get("Frequency"))
+    day = str(b.get("Day", "")).strip()
+    if freq == "monthly":
+        return f"monthly on day {day}"
+    if freq == "semi-monthly":
+        return f"twice-monthly on days {day}"
+    if freq == "weekly":
+        return f"every {day}"
+    if freq == "biweekly":
+        return f"biweekly from {day}"
+    return freq
+
+
+def detect_recurring_candidates(df: pd.DataFrame, months_back: int = 3) -> list[dict]:
+    """Find merchants tagged 'Bills' that appear in multiple recent months with similar amounts.
+
+    Only considers transactions in the 'Bills' category; other expense categories are
+    intentionally out of scope so the bills page stays focused on what the user has
+    chosen to track as a bill.
     """
     today = pd.Timestamp(date.today())
     cutoff = today - pd.DateOffset(months=months_back)
-    recent = df[(df["Date"] >= cutoff) & (df["Amount"] < 0)].copy()
-    excluded = INCOME_CATS + SAVINGS_CATS + ["Transfer", "Uncategorized"]
-    recent = recent[~recent["Category"].isin(excluded)]
+    recent = df[(df["Date"] >= cutoff) & (df["Amount"] < 0) & (df["Category"] == "Bills")].copy()
     if recent.empty:
         return []
 
@@ -379,9 +562,7 @@ def average_daily_variable_burn(df: pd.DataFrame, bills: list[dict],
     else:
         baseline_monthly = float(outflows["Amount"].abs().sum() / n_months)
 
-    scheduled_bills_total = sum(
-        float(b.get("Amount", 0)) for b in bills if str(b.get("Day", "")).strip().isdigit()
-    )
+    scheduled_bills_total = sum(monthly_equivalent(b) for b in bills if is_bill_scheduled(b))
     variable_monthly = max(0.0, baseline_monthly - scheduled_bills_total)
     return variable_monthly / 30.44
 
@@ -438,17 +619,16 @@ def build_forecast(horizon_days: int = 180, include_savings: bool = True,
     bill_events: list[dict] = []
     bills_no_day: list[str] = []
     for b in bills:
-        day_str = str(b.get("Day", "")).strip()
-        if not day_str.isdigit():
+        if not is_bill_scheduled(b):
             bills_no_day.append(b["Name"])
             continue
-        bill_events.extend(_monthly_events_in_horizon(
-            today, horizon_end, int(day_str), b["Name"], -float(b["Amount"]), "bill",
-        ))
+        amount = -float(b["Amount"])
+        for d in bill_occurrences_in_range(b, today, horizon_end):
+            bill_events.append({"date": d, "label": b["Name"], "amount": amount, "type": "bill"})
     if bills_no_day:
         sample = ", ".join(bills_no_day[:3])
         more = f" (+{len(bills_no_day) - 3} more)" if len(bills_no_day) > 3 else ""
-        warnings.append(f"{len(bills_no_day)} bill(s) have no Day set, excluded from event timeline: {sample}{more}")
+        warnings.append(f"{len(bills_no_day)} bill(s) have no schedule set, excluded from event timeline: {sample}{more}")
 
     savings_events: list[dict] = []
     if include_savings and not goals_df.empty:
@@ -568,9 +748,7 @@ def compute_pace(df: pd.DataFrame, today: "date",
         cat = (b.get("Category") or "").strip()
         if not cat:
             continue
-        day_str = str(b.get("Day", "")).strip()
-        day = int(day_str) if day_str.isdigit() else None
-        bills_by_cat[cat].append({"amount": float(b.get("Amount", 0) or 0), "day": day})
+        bills_by_cat[cat].append(b)
 
     rows = []
     for cat in set(actual_by_cat) | set(avg_by_cat) | set(budget_by_cat):
@@ -580,10 +758,10 @@ def compute_pace(df: pd.DataFrame, today: "date",
             continue
 
         cat_bills = bills_by_cat.get(cat, [])
-        cat_bill_total = sum(b["amount"] for b in cat_bills)
+        cat_bill_total = sum(monthly_equivalent(b) for b in cat_bills)
         cat_bill_paid_so_far = sum(
-            b["amount"] for b in cat_bills
-            if b["day"] is not None and b["day"] <= days_elapsed
+            float(b.get("Amount", 0) or 0) * len(bill_occurrences_in_range(b, month_start, today))
+            for b in cat_bills if is_bill_scheduled(b)
         )
 
         baseline_discretionary = max(0.0, baseline_monthly - cat_bill_total)
@@ -716,19 +894,21 @@ def detect_anomalies(df: pd.DataFrame, bills: list[dict], today: "date") -> dict
     } for _, r in large.sort_values("Amount").head(5).iterrows()]
 
     missing_bills = []
+    month_start = today.replace(day=1)
     for b in bills:
-        day_str = str(b.get("Day", "")).strip()
-        if not day_str.isdigit():
+        if not is_bill_scheduled(b):
             continue
-        day = int(day_str)
-        if day > today.day:
+        occurrences_due = bill_occurrences_in_range(b, month_start, today)
+        if not occurrences_due:
             continue
         name = b["Name"]
         matches = mtd[mtd["Description"].str.contains(name, case=False, na=False, regex=False)]
-        if matches.empty:
+        if len(matches) < len(occurrences_due):
             missing_bills.append({
                 "name": name,
-                "expected_day": day,
+                "expected_day": occurrences_due[0].day,
+                "expected_count": len(occurrences_due),
+                "actual_count": int(len(matches)),
                 "amount": round(float(b.get("Amount", 0) or 0), 2),
             })
 
@@ -1196,7 +1376,9 @@ def recurring_view():
     df = load_transactions()
     suggestions = detect_recurring_candidates(df)
     categories = load_categories()["Category"].tolist()
-    total = sum(b["Amount"] for b in bills)
+    for b in bills:
+        b["MonthlyEquivalent"] = monthly_equivalent(b)
+    total = sum(b["MonthlyEquivalent"] for b in bills)
     return render_template(
         "recurring.html",
         bills=bills,
@@ -1218,6 +1400,7 @@ def recurring_save():
             "Name": name,
             "Amount": request.form.get(f"amount_{i}") or 0,
             "Category": request.form.get(f"category_{i}", "").strip(),
+            "Frequency": request.form.get(f"frequency_{i}", "monthly").strip(),
             "Day": request.form.get(f"day_{i}", "").strip(),
             "Notes": request.form.get(f"notes_{i}", "").strip(),
         })
@@ -1243,6 +1426,7 @@ def recurring_add_detected():
                 "Name": s["Name"],
                 "Amount": s["Amount"],
                 "Category": s["Category"],
+                "Frequency": "monthly",
                 "Day": "",
                 "Notes": f"Detected from last {s['Months Window']} mo",
             })
@@ -1267,7 +1451,7 @@ def recurring_add_from_transaction():
     row = df.loc[idx]
     name = str(row["Description"]).strip()[:60]
     amount = abs(float(row["Amount"]))
-    day = int(row["Date"].day)
+    fallback_day = int(row["Date"].day)
     category = str(row["Category"]) if pd.notna(row["Category"]) else ""
 
     bills = load_recurring_bills()
@@ -1275,15 +1459,21 @@ def recurring_add_from_transaction():
         flash(f"'{name}' is already a recurring bill — edit it at /recurring.")
         return redirect(request.referrer or url_for("transactions"))
 
-    bills.append({
+    # Use the merchant key (first segment) for cadence detection — broader match than full description
+    key = name.split(" - ")[0].strip() if " - " in name else " ".join(name.split()[:3])
+    frequency, day_field, n_matches = detect_cadence(df, key, fallback_day)
+
+    bill = {
         "Name": name,
         "Amount": amount,
         "Category": category,
-        "Day": str(day),
-        "Notes": f"From {row['Date'].strftime('%Y-%m-%d')} transaction",
-    })
+        "Frequency": frequency,
+        "Day": day_field,
+        "Notes": f"From {row['Date'].strftime('%Y-%m-%d')} transaction ({n_matches} matches in last 120d)",
+    }
+    bills.append(bill)
     save_recurring_bills(bills)
-    flash(f"Added '{name}' (${amount:,.2f}, day {day}) to recurring bills — review at /recurring.")
+    flash(f"Added '{name}' (${amount:,.2f}, {describe_bill_cadence(bill)}) to recurring bills — review at /recurring.")
     return redirect(request.referrer or url_for("transactions"))
 
 
