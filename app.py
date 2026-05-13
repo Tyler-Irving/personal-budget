@@ -1252,6 +1252,41 @@ def recurring_add_detected():
     return redirect(url_for("recurring_view"))
 
 
+@app.route("/recurring/add-from-transaction", methods=["POST"])
+def recurring_add_from_transaction():
+    """Promote a single transaction to a recurring bill with sensible defaults."""
+    try:
+        idx = int(request.form.get("idx", "-1"))
+    except ValueError:
+        idx = -1
+    df = load_transactions()
+    if idx < 0 or idx not in df.index:
+        flash("Transaction not found.")
+        return redirect(request.referrer or url_for("transactions"))
+
+    row = df.loc[idx]
+    name = str(row["Description"]).strip()[:60]
+    amount = abs(float(row["Amount"]))
+    day = int(row["Date"].day)
+    category = str(row["Category"]) if pd.notna(row["Category"]) else ""
+
+    bills = load_recurring_bills()
+    if any(b["Name"].lower() == name.lower() for b in bills):
+        flash(f"'{name}' is already a recurring bill — edit it at /recurring.")
+        return redirect(request.referrer or url_for("transactions"))
+
+    bills.append({
+        "Name": name,
+        "Amount": amount,
+        "Category": category,
+        "Day": str(day),
+        "Notes": f"From {row['Date'].strftime('%Y-%m-%d')} transaction",
+    })
+    save_recurring_bills(bills)
+    flash(f"Added '{name}' (${amount:,.2f}, day {day}) to recurring bills — review at /recurring.")
+    return redirect(request.referrer or url_for("transactions"))
+
+
 # ----- Monthly drilldown -----
 
 @app.route("/month/<yyyymm>")

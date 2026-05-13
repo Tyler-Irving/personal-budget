@@ -76,6 +76,7 @@
       <th class="px-3 py-2">Account</th>
       <th class="px-3 py-2">Category</th>
       <th class="px-3 py-2">Notes</th>
+      <th class="px-2 py-2"></th>
     </tr>
   </thead>
   <tbody>
@@ -97,6 +98,14 @@
         </form>
       </td>
       <td class="px-3 py-1 text-gray-500 dark:text-gray-400 text-xs">{{ r.Notes }}</td>
+      <td class="px-2 py-1 text-right whitespace-nowrap">
+        {% if r.Amount < 0 %}
+        <form method="post" action="/recurring/add-from-transaction" class="inline">
+          <input type="hidden" name="idx" value="{{ r._idx }}">
+          <button class="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300" title="Add as recurring bill — review at /recurring">↻ recurring</button>
+        </form>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </tbody>
